@@ -1,0 +1,90 @@
+{
+  "name": "llamble",
+  "productName": "Llamble",
+  "version": "0.1.0",
+  "description": "Llamble desktop client",
+  "main": "electron/main.cjs",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k \"vite\" \"wait-on tcp:5173 && cross-env LLAMBLE_DEV=1 electron .\"",
+    "build": "node scripts/copy-mediapipe.cjs && node scripts/copy-audio.cjs && tsc --noEmit && vite build",
+    "start": "electron .",
+    "dist": "npm run build && electron-builder --win --publish never",
+    "dist:dir": "npm run build && electron-builder --win --dir",
+    "release": "npm run build && electron-builder --win --publish always"
+  },
+  "build": {
+    "appId": "chat.llamble.desktop",
+    "productName": "Llamble",
+    "files": [
+      "dist/**",
+      "electron/**",
+      "build/icon.png"
+    ],
+    "extraResources": [
+      {
+        "from": "native/llamble-helper/target/release/llamble-helper.exe",
+        "to": "llamble-helper.exe"
+      }
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "protocols": [
+      {
+        "name": "Llamble invite",
+        "schemes": [
+          "llamble"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "build/icon.png",
+      "artifactName": "Llamble-Setup.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "artifactName": "Llamble-Setup.${ext}",
+      "installerSidebar": "build/installerSidebar.bmp",
+      "uninstallerSidebar": "build/uninstallerSidebar.bmp",
+      "installerHeader": "build/installerHeader.bmp"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "eEPlanet",
+        "repo": "Llamble",
+        "releaseType": "draft"
+      }
+    ]
+  },
+  "dependencies": {
+    "@mediapipe/tasks-vision": "^1.2.2",
+    "canvas-confetti": "^1.9.4",
+    "electron-updater": "^6.8.11",
+    "fireworks-js": "^2.10.8",
+    "livekit-client": "^2.23.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zustand": "^5.1.0"
+  },
+  "devDependencies": {
+    "@sapphi-red/web-noise-suppressor": "0.4.1",
+    "@types/canvas-confetti": "^1.9.0",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "@vitejs/plugin-react": "^6.2.1",
+    "concurrently": "^10.0.6",
+    "cross-env": "^10.1.0",
+    "electron": "^45.2.3",
+    "electron-builder": "^26.18.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.6",
+    "wait-on": "^9.5.1"
+  }
+}

@@ -1,0 +1,8 @@
+node_modules/
+target/
+dist/
+release/
+data/
+*.log
+__pycache__/
+*.pyc

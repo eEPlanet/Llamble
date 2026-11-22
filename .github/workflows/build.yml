@@ -1,0 +1,390 @@
+# Builds everything in the cloud so nothing has to be copied to the NAS:
+#  - Server image  -> ghcr.io/<owner>/llamble:latest   (TrueNAS pulls this)
+#  - Windows app   -> published as a GitHub Release on every push to main
+#                     download: https://github.com/eEPlanet/Llamble/releases/latest/download/Llamble-Setup.exe
+#                     installed apps update themselves from these releases
+#  - Android app   -> Llamble.apk on the same release (signed with the key in the
+#                     ANDROID_KEYSTORE_B64 / ANDROID_KEYSTORE_PASSWORD secrets), after it
+#                     opens without crashing in an Android emulator
+name: build
+on:
+  push:
+    # main only: tag pushes must never build (moving old tags once rebuilt and published old code)
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  server-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check React hook rules (a hook after an early return crashes the app)
+        run: |
+          mkdir -p /tmp/hookcheck && cd /tmp/hookcheck
+          npm init -y > /dev/null
+          npm i --silent --no-audit --no-fund eslint@9 eslint-plugin-react-hooks@5 typescript-eslint@8 typescript@5
+          cp -r "$GITHUB_WORKSPACE/client/src" src
+          cp "$GITHUB_WORKSPACE/client/scripts/hooks-check.eslint.config.mjs" eslint.config.mjs
+          npx eslint -c eslint.config.mjs src
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/llamble
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=tag
+            type=sha,format=short
+      # build and test the image before anyone can pull it
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: llamble:test
+          build-args: LLAMBLE_VERSION=0.2.${{ github.run_number }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Real voice calls against the image (two browsers, voice server killed mid-call)
+        run: |
+          docker run -d --name llamble -p 8090:8080 -p 7881:7881 -p 7882:7882/udp llamble:test
+          which ffprobe > /dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg > /dev/null)
+          pip install --quiet playwright websocket-client requests
+          python -m playwright install --with-deps chromium > /dev/null
+          python tests/voice_e2e.py http://localhost:8090 llamble || { docker logs llamble | tail -80; exit 1; }
+          python tests/phone_share_test.py http://localhost:8090
+          python tests/show_record_test.py http://localhost:8090 || { docker logs llamble | tail -60; exit 1; }
+      - name: Upload Home screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: home-screenshots
+          path: |
+            /tmp/home*.png
+            /tmp/show-rec.webm
+          if-no-files-found: ignore
+      # also keep them on a side branch (handy to look at without downloading artifacts)
+      - name: Save Home screenshots to the ci-screenshots branch
+        if: always() && github.ref == 'refs/heads/main'
+        run: |
+          ls /tmp/home*.png >/dev/null 2>&1 || exit 0
+          mkdir -p /tmp/shots && cp /tmp/home*.png /tmp/shots/ && cd /tmp/shots
+          git init -q && git checkout -q -b ci-screenshots
+          git config user.name "llamble-ci" && git config user.email "ci@users.noreply.github.com"
+          git add . && git commit -qm "Home screenshots for ${GITHUB_SHA}"
+          git push -qf "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" ci-screenshots
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          build-args: LLAMBLE_VERSION=0.2.${{ github.run_number }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  windows-app:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: client
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+      - run: npm ci
+      # our Windows helper (open windows for game detection, graphics cards); Rust is preinstalled on the runner
+      - name: Build llamble-helper.exe
+        working-directory: client/native/llamble-helper
+        run: cargo build --release --locked
+      - name: Check llamble-helper.exe answers
+        working-directory: client/native/llamble-helper
+        shell: pwsh
+        run: |
+          $out = "windows`ngpus`nexit`n" | .\target\release\llamble-helper.exe
+          $out | ForEach-Object { $_ | ConvertFrom-Json | Out-Null }
+          Write-Host "helper answered:" ($out -join " ").Substring(0, [Math]::Min(300, ($out -join " ").Length))
+          if ($out.Count -ne 2) { throw "expected 2 answers, got $($out.Count)" }
+          (Get-Item .\target\release\llamble-helper.exe).Length / 1KB | ForEach-Object { Write-Host ("size: {0:N0} KB" -f $_) }
+      # native recording (Windows Graphics Capture → Media Foundation encoder → MP4) on the runner's
+      # screen: no graphics card here, so Windows encodes on the processor, but capture, the encoder
+      # hookup and MP4 writing all run for real. Not required yet (runners may not allow capture).
+      - name: Native recorder makes a real MP4
+        continue-on-error: true
+        working-directory: client/native/llamble-helper
+        shell: pwsh
+        run: |
+          $mp4 = Join-Path $env:RUNNER_TEMP "rec-test.mp4"
+          $psi = New-Object System.Diagnostics.ProcessStartInfo
+          $psi.FileName = (Resolve-Path .\target\release\llamble-helper.exe).Path
+          $psi.Arguments = "record `"$mp4`" --point 20,20 --fps 30 --bpp 0.1 --audio except 4"
+          $psi.RedirectStandardInput = $true
+          $psi.RedirectStandardOutput = $true
+          $psi.UseShellExecute = $false
+          $p = [System.Diagnostics.Process]::Start($psi)
+          # something moving on screen while it records
+          $note = Start-Process notepad -PassThru
+          Start-Sleep -Seconds 6
+          try { $p.StandardInput.WriteLine("stop") } catch { Write-Host "(it had already stopped)" }
+          if (-not $p.WaitForExit(60000)) { $p.Kill(); throw "the recorder didn't finish" }
+          Stop-Process -Id $note.Id -ErrorAction SilentlyContinue
+          $out = $p.StandardOutput.ReadToEnd()
+          Write-Host $out
+          if ($out -notmatch "started") { throw "it didn't start" }
+          if ($out -notmatch "(?m)^done") { throw "it didn't finish the file" }
+          $bytes = [System.IO.File]::ReadAllBytes($mp4)
+          $box = [System.Text.Encoding]::ASCII.GetString($bytes, 4, 4)
+          Write-Host ("MP4: {0:N0} KB, first box '{1}'" -f ($bytes.Length / 1KB), $box)
+          if ($box -ne "ftyp" -or $bytes.Length -lt 10000) { throw "not a proper MP4" }
+          python ..\..\..\tests\mp4_check.py $mp4
+      - name: Instant replay saves a clip
+        continue-on-error: true
+        working-directory: client/native/llamble-helper
+        shell: pwsh
+        run: |
+          $clip = Join-Path $env:RUNNER_TEMP "replay-clip.mp4"
+          $psi = New-Object System.Diagnostics.ProcessStartInfo
+          $psi.FileName = (Resolve-Path .\target\release\llamble-helper.exe).Path
+          $psi.Arguments = "replay --point 20,20 --fps 30 --bpp 0.1 --keep 20 --audio except 4"
+          $psi.RedirectStandardInput = $true
+          $psi.RedirectStandardOutput = $true
+          $psi.UseShellExecute = $false
+          $p = [System.Diagnostics.Process]::Start($psi)
+          $note = Start-Process notepad -PassThru
+          Start-Sleep -Seconds 8
+          try { $p.StandardInput.WriteLine("save $clip 5"); Start-Sleep -Seconds 2; $p.StandardInput.WriteLine("stop") } catch { Write-Host "(it had already stopped)" }
+          if (-not $p.WaitForExit(30000)) { $p.Kill(); throw "replay didn't stop" }
+          Stop-Process -Id $note.Id -ErrorAction SilentlyContinue
+          $out = $p.StandardOutput.ReadToEnd()
+          Write-Host $out
+          if ($out -notmatch "(?m)^saved") { throw "no clip saved" }
+          python ..\..\..\tests\mp4_check.py $clip --fragmented
+      # every push gets its own version so installed apps auto-update to it
+      - run: npm version 0.2.${{ github.run_number }} --no-git-tag-version
+      # create the release up front (as a draft) so parallel uploads don't race to create it
+      - run: gh release create v0.2.${{ github.run_number }} --draft --title "Llamble 0.2.${{ github.run_number }}" --notes "Automatic build of ${{ github.sha }}" --repo ${{ github.repository }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Electron and electron-builder's tools come from GitHub release downloads, which
+      # sometimes 504 for hours: keep them between builds and retry on hiccups
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~\AppData\Local\electron\Cache
+            ~\AppData\Local\electron-builder\Cache
+          key: electron-${{ runner.os }}-${{ hashFiles('client/package-lock.json') }}
+          restore-keys: electron-${{ runner.os }}-
+      - name: npm run release (retries GitHub download hiccups)
+        shell: pwsh
+        run: |
+          for ($i = 1; $i -le 4; $i++) {
+            npm run release
+            if ($LASTEXITCODE -eq 0) { exit 0 }
+            Write-Host "attempt $i failed; retrying in $(60 * $i)s"
+            Start-Sleep -Seconds (60 * $i)
+          }
+          exit 1
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      # publish it: becomes "latest", so the download link and auto-update pick it up
+      - run: gh release edit v0.2.${{ github.run_number }} --draft=false --latest --repo ${{ github.repository }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Llamble-Setup
+          path: client/release/*.exe
+
+  android-app:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+      - name: Build the web app
+        working-directory: client
+        run: |
+          npm ci
+          # the same version as the APK, so the app doesn't think it's out of date
+          npm version 0.2.${{ github.run_number }} --no-git-tag-version
+          npm run build
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: Signing key
+        id: key
+        env:
+          B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$B64" ]; then
+            echo "$B64" | base64 -d > "$RUNNER_TEMP/llamble.jks"
+            echo "LLAMBLE_KEYSTORE=$RUNNER_TEMP/llamble.jks" >> "$GITHUB_ENV"
+            echo "signed=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::No ANDROID_KEYSTORE_B64 secret yet: building a test-signed APK that won't be published (updates need one permanent key)"
+          fi
+      - name: Build Llamble.apk and Llamble-Play.aab
+        working-directory: android
+        env:
+          LLAMBLE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          # the GitHub APK (updates itself) and the Google Play bundle (Play updates it)
+          ./gradlew --no-daemon assembleDirectRelease bundlePlayRelease -PversionName=0.2.${{ github.run_number }}
+          cp app/build/outputs/apk/direct/release/app-direct-release.apk ../Llamble.apk
+          cp app/build/outputs/bundle/playRelease/app-play-release.aab ../Llamble-Play.aab
+          ls -la ../Llamble.apk ../Llamble-Play.aab
+      - name: Open it in an Android emulator
+        timeout-minutes: 25
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          bash tests/android_smoke.sh Llamble.apk
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-test
+          path: |
+            /tmp/android.png
+            /tmp/android-logcat.txt
+          if-no-files-found: ignore
+      - name: Add it to the release
+        if: steps.key.outputs.signed == '1'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag=v0.2.${{ github.run_number }}
+          # the Windows job creates the release; wait for it
+          for i in $(seq 1 60); do gh release view "$tag" --repo ${{ github.repository }} >/dev/null 2>&1 && break; sleep 20; done
+          gh release upload "$tag" Llamble.apk Llamble-Play.aab --clobber --repo ${{ github.repository }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Llamble-apk
+          path: Llamble.apk
+
+  # Llamble Server for Windows: the same server as the NAS image (server, web app, voice
+  # server, AI, ffmpeg) with a small tray app, as LlambleServer-Setup.exe on the same release
+  windows-server:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+      - name: Web app
+        working-directory: client
+        run: |
+          npm ci
+          npm run build
+      - name: Server
+        working-directory: server
+        run: cargo build --release --locked
+      - name: Tray app
+        working-directory: server-app
+        run: cargo build --release
+      - name: Voice server, AI and ffmpeg for Windows
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $d = "$env:RUNNER_TEMP\dl"; New-Item -ItemType Directory -Force $d | Out-Null
+          gh release download --repo livekit/livekit --pattern "*windows_amd64.zip" --dir $d
+          # llama.cpp's processor-only Windows build (the name changes now and then: pick it from the list)
+          # the newest release can be missing its Windows files while they're still uploading:
+          # use the newest of the last few releases that has them
+          $llama = $null; $tag = $null
+          foreach ($t in (gh release list --repo ggml-org/llama.cpp -L 8 --json tagName -q ".[].tagName")) {
+            $names = gh release view $t --repo ggml-org/llama.cpp --json assets -q ".assets[].name"
+            $llama = $names | Where-Object { $_ -match "bin-win-cpu-x64\.zip$" } | Select-Object -First 1
+            if (-not $llama) { $llama = $names | Where-Object { $_ -match "win" -and $_ -match "x64" -and $_ -match "\.zip$" -and $_ -notmatch "cuda|cudart|vulkan|sycl|hip|opencl|kompute|arm64" } | Select-Object -First 1 }
+            if ($llama) { $tag = $t; break }
+            Write-Host "  llama.cpp $t has no Windows build yet"
+          }
+          if (-not $llama) { throw "no llama.cpp Windows build found" }
+          Write-Host "  llama.cpp: $tag / $llama"
+          gh release download $tag --repo ggml-org/llama.cpp --pattern $llama --dir $d
+          Rename-Item "$d\$llama" "llama-win-x64.zip"
+          gh release download latest --repo BtbN/FFmpeg-Builds --pattern "ffmpeg-master-latest-win64-lgpl-shared.zip" --dir $d
+          Get-ChildItem $d
+      - name: Put it together
+        shell: pwsh
+        run: |
+          $s = "$env:RUNNER_TEMP\stage"; $d = "$env:RUNNER_TEMP\dl"
+          New-Item -ItemType Directory -Force "$s\bin","$s\livekit","$s\llama","$s\ffmpeg" | Out-Null
+          Copy-Item server-app\target\release\LlambleServer.exe $s\
+          Copy-Item server\target\release\llamble-server.exe $s\bin\
+          Copy-Item client\dist $s\web -Recurse
+          Expand-Archive (Get-ChildItem $d\*windows_amd64.zip)[0] "$env:RUNNER_TEMP\lk"
+          Copy-Item (Get-ChildItem "$env:RUNNER_TEMP\lk" -Recurse -Filter livekit-server.exe)[0] $s\livekit\
+          Expand-Archive $d\llama-win-x64.zip "$env:RUNNER_TEMP\ll"
+          # the exe may sit in a subfolder: take the folder that has llama-server.exe
+          $srv = (Get-ChildItem "$env:RUNNER_TEMP\ll" -Recurse -Filter llama-server.exe)[0]
+          Copy-Item "$($srv.DirectoryName)\*" $s\llama\ -Recurse
+          Expand-Archive (Get-ChildItem $d\ffmpeg-*.zip)[0] "$env:RUNNER_TEMP\ff"
+          Copy-Item "$env:RUNNER_TEMP\ff\*\bin\*" $s\ffmpeg\
+          "0.2.${{ github.run_number }}" | Set-Content -NoNewline $s\version.txt
+          Get-Content LICENSE.md, client\src\legal\third-party-licenses.txt | Set-Content $s\LICENSE.txt
+          Get-ChildItem $s -Recurse -Filter *.exe | ForEach-Object { "{0,10:N0} KB  {1}" -f ($_.Length / 1KB), $_.FullName.Substring($s.Length) }
+      - name: Check the server runs on Windows
+        shell: pwsh
+        run: |
+          $s = "$env:RUNNER_TEMP\stage"
+          & $s\livekit\livekit-server.exe --version
+          & $s\llama\llama-server.exe --version
+          & $s\ffmpeg\ffmpeg.exe -hide_banner -version | Select-Object -First 1
+          $env:LLAMBLE_DATA = "$env:RUNNER_TEMP\data"; $env:LLAMBLE_BIND = "0.0.0.0:8090"; $env:LLAMBLE_WEB_DIR = "$s\web"
+          $env:LLAMBLE_LIVEKIT_BIN = "$s\livekit\livekit-server.exe"; $env:LLAMBLE_LLAMA_BIN = "$s\llama\llama-server.exe"
+          $env:PATH = "$s\ffmpeg;$env:PATH"
+          $p = Start-Process "$s\bin\llamble-server.exe" -PassThru -RedirectStandardOutput "$env:RUNNER_TEMP\out.txt" -RedirectStandardError "$env:RUNNER_TEMP\err.txt"
+          $ok = $false
+          for ($i = 0; $i -lt 60; $i++) {
+            try { $r = Invoke-WebRequest http://127.0.0.1:8090/ -UseBasicParsing -TimeoutSec 3; if ($r.StatusCode -eq 200 -and $r.Content -match "Llamble") { $ok = $true; break } } catch {}
+            Start-Sleep 1
+          }
+          Get-Content "$env:RUNNER_TEMP\out.txt","$env:RUNNER_TEMP\err.txt" -ErrorAction SilentlyContinue | Select-Object -Last 30
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          if (-not $ok) { throw "the server didn't answer on Windows" }
+          Write-Host "the server answers on Windows"
+      - name: Installer
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress | Out-Null }
+          & $iscc /Qp "/DAppVersion=0.2.${{ github.run_number }}" "/DStage=$env:RUNNER_TEMP\stage" server-app\installer.iss
+          if ($LASTEXITCODE -ne 0) { throw "installer build failed" }
+          Get-Item server-app\Output\LlambleServer-Setup.exe | Select-Object Name, Length
+      - name: Add it to the release
+        if: github.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag=v0.2.${{ github.run_number }}
+          # the Windows app job creates the release; wait for it
+          for i in $(seq 1 90); do gh release view "$tag" --repo ${{ github.repository }} >/dev/null 2>&1 && break; sleep 20; done
+          gh release upload "$tag" server-app/Output/LlambleServer-Setup.exe --clobber --repo ${{ github.repository }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LlambleServer-Setup
+          path: server-app/Output/LlambleServer-Setup.exe

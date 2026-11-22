@@ -1,0 +1,651 @@
+//! `llamble-helper record <out.mp4> (--window <hwnd> | --point <x>,<y>) [--fps 60]
+//!     [--bitrate 40000000 | --bpp 0.2] [--codec auto|av1|h264] [--audio window|app|except <id>]`
+//!
+//! Records a window or a whole screen the way dedicated recording software does, with no
+//! browser engine in the way:
+//!  - Windows Graphics Capture hands us each new frame as a texture on the graphics card;
+//!  - it's copied (still on the graphics card) into a frame the encoder owns;
+//!  - Media Foundation encodes it on the graphics card's own encoder (NVIDIA NVENC, AMD,
+//!    Intel): AV1 when the card has it, else H.264; variable bitrate at the rate asked;
+//!  - sound comes from one program (or everything but one) via Windows' per-app capture
+//!    (audio.rs), encoded as AAC;
+//!  - both go into an MP4, timed by the same clock so they stay in step.
+//!
+//! The size is whatever is captured (a 2560×1440 game records at 2560×1440).
+//! Talks on stdout, one line each: `started <codec> <gpu|cpu> <w> <h>`, `stat <fps> <dropped>
+//! <bytes>` every second, then `done` (or `error <why>`). Send `stop` on stdin to finish.
+
+#![cfg(windows)]
+
+use crate::audio;
+use crate::convert;
+use crate::replay;
+use std::io::{BufRead, Write};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
+use windows::core::{factory, Interface, Result, GUID, HRESULT, PCWSTR, VARIANT};
+use windows::Foundation::TypedEventHandler;
+use windows::Graphics::Capture::{Direct3D11CaptureFramePool, GraphicsCaptureItem};
+use windows::Graphics::DirectX::Direct3D11::IDirect3DDevice;
+use windows::Graphics::DirectX::DirectXPixelFormat;
+use windows::Win32::Foundation::{HMODULE, HWND, POINT, RECT};
+use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
+use windows::Win32::UI::HiDpi::{SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
+use windows::Win32::UI::WindowsAndMessaging::IsIconic;
+use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_HARDWARE;
+use windows::Win32::Graphics::Direct3D11::*;
+use windows::Win32::Graphics::Dxgi::IDXGIDevice;
+use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromPoint, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST};
+use windows::Win32::Media::MediaFoundation::*;
+use windows::Win32::System::Com::{CoInitializeEx, CoTaskMemFree, COINIT_MULTITHREADED};
+use windows::Win32::System::WinRT::Direct3D11::{CreateDirect3D11DeviceFromDXGIDevice, IDirect3DDxgiInterfaceAccess};
+use windows::Win32::System::WinRT::Graphics::Capture::IGraphicsCaptureItemInterop;
+
+struct Opts {
+    out: String,
+    window: Option<u64>,
+    /// a window and everything shown on top of it (its monitor, cut to the window's area)
+    area: Option<u64>,
+    point: Option<(i32, i32)>,
+    /// recording height (width follows the shape); none = the captured size
+    height: Option<u32>,
+    fps: u32,
+    bitrate: u32,
+    /// bits per pixel per frame: when given, the bitrate follows the captured size
+    bpp: Option<f64>,
+    codec: String,
+    audio: Option<(String, u64)>,
+    /// instant replay: keep this many seconds in memory instead of writing a file
+    keep: Option<u64>,
+}
+
+fn parse(args: &[String]) -> Option<Opts> {
+    let mut o = Opts { out: args.first()?.clone(), window: None, area: None, point: None, height: None, fps: 60, bitrate: 40_000_000, bpp: None, codec: "auto".into(), audio: None, keep: None };
+    let mut i = 1;
+    while i < args.len() {
+        let v = args.get(i + 1).cloned().unwrap_or_default();
+        match args[i].as_str() {
+            "--window" => o.window = v.parse().ok(),
+            "--area" => o.area = v.parse().ok(),
+            "--height" => o.height = v.parse().ok().filter(|h| (240..=4320).contains(h)),
+            "--point" => {
+                let (x, y) = v.split_once(',')?;
+                o.point = Some((x.trim().parse().ok()?, y.trim().parse().ok()?));
+            }
+            "--fps" => o.fps = v.parse().ok().filter(|f| (10..=240).contains(f))?,
+            "--bitrate" => o.bitrate = v.parse().ok().filter(|b| (1_000_000..=200_000_000).contains(b))?,
+            "--codec" => o.codec = v,
+            "--keep" => o.keep = v.parse().ok(),
+            "--bpp" => o.bpp = v.parse().ok().filter(|b: &f64| (0.01..=2.0).contains(b)),
+            "--audio" => {
+                let id = args.get(i + 2)?.parse().ok()?;
+                o.audio = Some((v, id));
+                i += 1;
+            }
+            _ => return None,
+        }
+        i += 2;
+    }
+    (o.window.is_some() || o.area.is_some() || o.point.is_some()).then_some(o)
+}
+
+/// Name the step in an error, so a report says which call refused.
+fn step<T>(name: &str, r: Result<T>) -> Result<T> {
+    r.map_err(|e| windows::core::Error::new(e.code(), format!("{name}: {}", e.message())))
+}
+
+fn say(line: &str) {
+    let mut out = std::io::stdout().lock();
+    let _ = writeln!(out, "{line}");
+    let _ = out.flush();
+}
+
+/// `llamble-helper replay (--window <hwnd> | --point <x>,<y>) [--keep 60] [same options as record]`:
+/// keeps the last seconds in memory; on stdin, `save <out.mp4> <seconds>` writes a clip
+/// (answers `saved <path> <seconds>`), `stop` ends.
+pub fn run_replay(args: &[String]) -> i32 {
+    let mut a = vec!["-".to_string()];
+    a.extend_from_slice(args);
+    if !a.iter().any(|x| x == "--keep") {
+        a.push("--keep".into());
+        a.push("60".into());
+    }
+    run(&a)
+}
+
+pub fn run(args: &[String]) -> i32 {
+    let Some(o) = parse(args) else {
+        say("error usage: record <out.mp4> (--window <hwnd> | --point <x>,<y>) [--fps 60] [--bitrate 40000000] [--codec auto|av1|h264] [--audio window|app|except <id>]");
+        return 2;
+    };
+    match unsafe { record(o) } {
+        Ok(()) => 0,
+        Err(e) => {
+            say(&format!("error {e}"));
+            1
+        }
+    }
+}
+
+/// Is there an encoder for this format on the graphics card?
+unsafe fn gpu_encoder(subtype: GUID) -> bool {
+    let out = MFT_REGISTER_TYPE_INFO { guidMajorType: MFMediaType_Video, guidSubtype: subtype };
+    let mut list: *mut Option<IMFActivate> = std::ptr::null_mut();
+    let mut n = 0u32;
+    if MFTEnumEx(MFT_CATEGORY_VIDEO_ENCODER, MFT_ENUM_FLAG_HARDWARE | MFT_ENUM_FLAG_SORTANDFILTER, None, Some(&out), &mut list, &mut n).is_err() || list.is_null() {
+        return false;
+    }
+    for i in 0..n as usize {
+        drop(std::ptr::read(list.add(i)));
+    }
+    CoTaskMemFree(Some(list as *const _));
+    n > 0
+}
+
+unsafe fn video_type(subtype: GUID, w: u32, h: u32, fps: u32, bitrate: u32) -> Result<IMFMediaType> {
+    let t = MFCreateMediaType()?;
+    t.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)?;
+    t.SetGUID(&MF_MT_SUBTYPE, &subtype)?;
+    t.SetUINT32(&MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive.0 as u32)?;
+    t.SetUINT64(&MF_MT_FRAME_SIZE, ((w as u64) << 32) | h as u64)?;
+    t.SetUINT64(&MF_MT_FRAME_RATE, ((fps as u64) << 32) | 1)?;
+    t.SetUINT64(&MF_MT_PIXEL_ASPECT_RATIO, (1u64 << 32) | 1)?;
+    if subtype == MFVideoFormat_ARGB32 {
+        t.SetUINT32(&MF_MT_DEFAULT_STRIDE, w * 4)?; // rows top to bottom, as Windows captures them
+    } else if subtype != MFVideoFormat_NV12 {
+        t.SetUINT32(&MF_MT_AVG_BITRATE, bitrate)?;
+    }
+    if subtype != MFVideoFormat_ARGB32 {
+        // HD colours (BT.709, video range): what the converter makes and what players expect
+        t.SetUINT32(&MF_MT_YUV_MATRIX, MFVideoTransferMatrix_BT709.0 as u32)?;
+        t.SetUINT32(&MF_MT_VIDEO_NOMINAL_RANGE, MFNominalRange_16_235.0 as u32)?;
+        t.SetUINT32(&MF_MT_VIDEO_PRIMARIES, MFVideoPrimaries_BT709.0 as u32)?;
+        t.SetUINT32(&MF_MT_TRANSFER_FUNCTION, MFVideoTransFunc_709.0 as u32)?;
+    }
+    if subtype == MFVideoFormat_H264 {
+        t.SetUINT32(&MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_High.0 as u32)?;
+    }
+    Ok(t)
+}
+
+unsafe fn audio_type(aac: bool) -> Result<IMFMediaType> {
+    let t = MFCreateMediaType()?;
+    t.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Audio)?;
+    t.SetUINT32(&MF_MT_AUDIO_SAMPLES_PER_SECOND, 48_000)?;
+    t.SetUINT32(&MF_MT_AUDIO_NUM_CHANNELS, 2)?;
+    if aac {
+        t.SetGUID(&MF_MT_SUBTYPE, &MFAudioFormat_AAC)?;
+        t.SetUINT32(&MF_MT_AUDIO_BITS_PER_SAMPLE, 16)?;
+        t.SetUINT32(&MF_MT_AUDIO_AVG_BYTES_PER_SECOND, 24_000)?; // 192 kbps
+    } else {
+        t.SetGUID(&MF_MT_SUBTYPE, &MFAudioFormat_Float)?;
+        t.SetUINT32(&MF_MT_AUDIO_BITS_PER_SAMPLE, 32)?;
+        t.SetUINT32(&MF_MT_AUDIO_BLOCK_ALIGNMENT, 8)?;
+        t.SetUINT32(&MF_MT_AUDIO_AVG_BYTES_PER_SECOND, 48_000 * 8)?;
+    }
+    Ok(t)
+}
+
+struct Writer {
+    sink: IMFSinkWriter,
+    video: u32,
+    audio: Option<u32>,
+    name: &'static str,
+}
+// Media Foundation's sink writer is free-threaded; we also only touch it under a lock.
+unsafe impl Send for Writer {}
+
+/// What the frame callback (on Windows' capture thread) uses. The device has multithread
+/// protection turned on and the sample allocator is free-threaded, so this is safe to share.
+struct Gpu {
+    ctx: ID3D11DeviceContext,
+    alloc: IMFVideoSampleAllocatorEx,
+    rt_device: IDirect3DDevice,
+    conv: Option<Mutex<convert::Converter>>,
+    /// no encoder on the graphics card: frames are converted into the first texture (NV12, or
+    /// BGRA without a video processor) and read back through the second into memory
+    cpu: Option<(ID3D11Texture2D, ID3D11Texture2D)>,
+}
+unsafe impl Send for Gpu {}
+unsafe impl Sync for Gpu {}
+
+/// Open the MP4 with the best encoder: AV1 or H.264 on the graphics card, else H.264 on the processor.
+unsafe fn open_writer(o: &Opts, mgr: &IMFDXGIDeviceManager, w: u32, h: u32, with_audio: bool, memory: Option<&replay::Buffer>, nv12: bool) -> Result<(Writer, bool)> {
+    let mut picks: Vec<(GUID, &'static str)> = vec![];
+    if o.codec == "auto" || o.codec == "av1" {
+        // (o.codec "cpu": H.264 on the processor, the fallback when the graphics card refuses)
+        picks.push((MFVideoFormat_AV1, "AV1"));
+    }
+    picks.push((MFVideoFormat_H264, "H.264"));
+    let mut last = HRESULT(0x8000_4005u32 as i32).into();
+    for (sub, name) in picks {
+        // no video processor on this PC: the processor's encoder, fed screen pixels as they are
+        let gpu = nv12 && o.codec != "cpu" && gpu_encoder(sub);
+        if !gpu && sub == MFVideoFormat_AV1 {
+            continue; // AV1 on the processor is far too slow to record with
+        }
+        if memory.is_none() {
+            let _ = std::fs::remove_file(&o.out);
+        }
+        let mut attrs = None;
+        MFCreateAttributes(&mut attrs, 4)?;
+        let attrs = attrs.unwrap();
+        if gpu {
+            // frames stay on the graphics card all the way into its encoder
+            attrs.SetUINT32(&MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, 1)?;
+            attrs.SetUnknown(&MF_SINK_WRITER_D3D_MANAGER, mgr)?;
+        }
+        let path: Vec<u16> = o.out.encode_utf16().chain([0]).collect();
+        let attempt = (|| -> Result<Writer> {
+            let (sink, video) = if let Some(buf) = memory {
+                // instant replay: a fragmented MP4 into memory (streams: 0 video, 1 sound)
+                let ms = MFCreateFMPEG4MediaSink(&buf.stream(), &video_type(sub, w, h, o.fps, o.bitrate)?, if with_audio { Some(audio_type(true)?) } else { None }.as_ref())?;
+                (MFCreateSinkWriterFromMediaSink(&ms, &attrs)?, 0u32)
+            } else {
+                let sink = MFCreateSinkWriterFromURL(PCWSTR(path.as_ptr()), None, &attrs)?;
+                let v = sink.AddStream(&video_type(sub, w, h, o.fps, o.bitrate)?)?;
+                (sink, v)
+            };
+            sink.SetInputMediaType(video, &video_type(if nv12 { MFVideoFormat_NV12 } else { MFVideoFormat_ARGB32 }, w, h, o.fps, 0)?, None)?;
+            // recording-grade settings: variable bitrate, quality over speed, a key frame every 2 s
+            let mut api: *mut core::ffi::c_void = std::ptr::null_mut();
+            if sink.GetServiceForStream(video, &GUID::zeroed(), &ICodecAPI::IID, &mut api).is_ok() && !api.is_null() {
+                let api = ICodecAPI::from_raw(api);
+                let _ = api.SetValue(&CODECAPI_AVEncCommonRateControlMode, &VARIANT::from(eAVEncCommonRateControlMode_UnconstrainedVBR.0 as u32));
+                let _ = api.SetValue(&CODECAPI_AVEncCommonMeanBitRate, &VARIANT::from(o.bitrate));
+                let _ = api.SetValue(&CODECAPI_AVEncCommonQualityVsSpeed, &VARIANT::from(70u32));
+                // a key frame every 2 s (every second for replay, so a clip can start close to where you asked)
+                let _ = api.SetValue(&CODECAPI_AVEncMPVGOPSize, &VARIANT::from(if memory.is_some() { o.fps } else { o.fps * 2 }));
+            }
+            let audio = if with_audio {
+                let a = if memory.is_some() { 1 } else { sink.AddStream(&audio_type(true)?)? };
+                sink.SetInputMediaType(a, &audio_type(false)?, None)?;
+                Some(a)
+            } else {
+                None
+            };
+            sink.BeginWriting()?;
+            Ok(Writer { sink, video, audio, name })
+        })();
+        match attempt {
+            Ok(wr) => return Ok((wr, gpu)),
+            Err(e) => last = e,
+        }
+    }
+    Err(last)
+}
+
+unsafe fn record(o: Opts) -> Result<()> {
+    CoInitializeEx(None, COINIT_MULTITHREADED).ok()?;
+    // real pixels everywhere (window and monitor positions match what's captured)
+    let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    MFStartup(MF_VERSION, MFSTARTUP_FULL)?;
+
+    // the graphics card
+    let mut device = None;
+    let mut ctx = None;
+    D3D11CreateDevice(None, D3D_DRIVER_TYPE_HARDWARE, HMODULE::default(), D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_VIDEO_SUPPORT, None, D3D11_SDK_VERSION, Some(&mut device), None, Some(&mut ctx))?;
+    let device: ID3D11Device = device.unwrap();
+    let ctx: ID3D11DeviceContext = ctx.unwrap();
+    let _ = device.cast::<ID3D11Multithread>()?.SetMultithreadProtected(true);
+    let rt_device: IDirect3DDevice = CreateDirect3D11DeviceFromDXGIDevice(&device.cast::<IDXGIDevice>()?)?.cast()?;
+
+    // what to capture
+    // a window that shows other windows on top of itself (Godot's running game): its area instead
+    let mut o = o;
+    if let Some(h) = o.window {
+        if crate::area::covers(HWND(h as usize as *mut _)) {
+            o.area = Some(h);
+            o.window = None;
+            say("note capturing the window's area: it shows another window on top of itself");
+        }
+    }
+    let interop = factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>()?;
+    let item: GraphicsCaptureItem = match (o.window, o.area, o.point) {
+        (Some(hwnd), _, _) => interop.CreateForWindow(HWND(hwnd as usize as *mut _))?,
+        (None, Some(hwnd), _) => interop.CreateForMonitor(MonitorFromWindow(HWND(hwnd as usize as *mut _), MONITOR_DEFAULTTONEAREST))?,
+        (None, None, Some((x, y))) => interop.CreateForMonitor(MonitorFromPoint(POINT { x, y }, MONITOR_DEFAULTTONEAREST))?,
+        _ => unreachable!(),
+    };
+    let size = item.Size()?;
+    // what we're actually after: the whole item, or (area mode) the window's part of its monitor
+    let area = o.area.map(|h| HWND(h as usize as *mut _));
+    let (src_w, src_h) = match area.and_then(|hw| window_region(hw, size)) {
+        Some(b) => (b.right - b.left, b.bottom - b.top),
+        None => (size.Width.max(2) as u32, size.Height.max(2) as u32),
+    };
+    // the recording's size: as captured, or the chosen height with the same shape
+    let (w, h) = match o.height {
+        Some(oh) if oh < src_h || oh > src_h => (((src_w as f64 * oh as f64 / src_h as f64).round() as u32) & !1, oh & !1),
+        _ => (src_w & !1, src_h & !1),
+    };
+    let (w, h) = (w.max(2), h.max(2));
+    if let Some(bpp) = o.bpp {
+        o.bitrate = ((w as f64 * h as f64 * o.fps as f64 * bpp) as u32).clamp(4_000_000, 150_000_000);
+    }
+
+    // the encoder and the file
+    let mut token = 0u32;
+    let mut mgr = None;
+    MFCreateDXGIDeviceManager(&mut token, &mut mgr)?;
+    let mgr = mgr.unwrap();
+    mgr.ResetDevice(&device, token)?;
+    let audio_target = o.audio.as_ref().and_then(|(m, id)| audio::target(m, *id));
+    let memory = o.keep.map(replay::Buffer::new);
+    // the graphics card's video processor (scales and converts for its encoder); PCs without one
+    // (no graphics driver, some virtual machines) record plain screen pixels on the processor
+    let conv = match convert::Converter::new(&device, &ctx, w, h, o.fps) {
+        Ok(c) => Some(c),
+        Err(e) => {
+            say(&format!("note no video processor ({e}); recording on the processor"));
+            None
+        }
+    };
+    let (w, h) = if conv.is_some() { (w, h) } else { (src_w & !1, src_h & !1) }; // can't scale without it
+    let (wr, on_gpu) = open_writer(&o, &mgr, w, h, audio_target.is_some(), memory.as_ref(), conv.is_some())?;
+
+    // frames the encoder owns (it hands one back when it's done with it)
+    let mut alloc: *mut core::ffi::c_void = std::ptr::null_mut();
+    MFCreateVideoSampleAllocatorEx(&IMFVideoSampleAllocatorEx::IID, &mut alloc)?;
+    let alloc = IMFVideoSampleAllocatorEx::from_raw(alloc);
+    alloc.SetDirectXManager(&mgr)?;
+    let mut aattrs = None;
+    MFCreateAttributes(&mut aattrs, 2)?;
+    let aattrs = aattrs.unwrap();
+    // NV12 frames the converter paints into and the encoder reads
+    aattrs.SetUINT32(&MF_SA_D3D11_BINDFLAGS, (D3D11_BIND_RENDER_TARGET.0 | D3D11_BIND_VIDEO_ENCODER.0) as u32)?;
+    if on_gpu {
+        alloc.InitializeSampleAllocatorEx(4, 16, &aattrs, &video_type(MFVideoFormat_NV12, w, h, o.fps, 0)?)?;
+    }
+
+    let writer = Arc::new(Mutex::new(wr));
+    let stop = Arc::new(AtomicBool::new(false));
+    let t0 = Arc::new(AtomicI64::new(-1)); // the first frame's time: zero in the file
+    let frames = Arc::new(AtomicU32::new(0));
+    let frames_total = Arc::new(AtomicU32::new(0));
+    // what happened to frames that didn't make it in (shown once a second, then cleared)
+    let arrived = Arc::new(AtomicU32::new(0));
+    let total_arrived = Arc::new(AtomicU32::new(0));
+    let last_error: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
+    let dropped = Arc::new(AtomicU32::new(0));
+    let frame_len = 10_000_000i64 / o.fps as i64;
+    let heard = Arc::new(AtomicBool::new(false)); // any sound written yet?
+
+    // each new frame from Windows
+    let pool = Direct3D11CaptureFramePool::CreateFreeThreaded(&rt_device, DirectXPixelFormat::B8G8R8A8UIntNormalized, 3, size)?;
+    let session = pool.CreateCaptureSession(&item)?;
+    let _ = session.SetIsCursorCaptureEnabled(true);
+    let _ = session.SetIsBorderRequired(false); // no yellow border (Windows 11)
+    let pool_size = Arc::new(Mutex::new(size));
+    {
+        let (writer, t0, frames, dropped, stop, frames_total) = (writer.clone(), t0.clone(), frames.clone(), dropped.clone(), stop.clone(), frames_total.clone());
+        let (arrived, last_error, total_arrived) = (arrived.clone(), last_error.clone(), total_arrived.clone());
+        let cpu = if on_gpu {
+            None
+        } else if let Some(c) = &conv {
+            Some((c.nv12_texture(false)?, c.nv12_texture(true)?))
+        } else {
+            Some((bgra_texture(&device, w, h, false)?, bgra_texture(&device, w, h, true)?))
+        };
+        let gpu = Gpu { ctx: ctx.clone(), alloc: alloc.clone(), rt_device: rt_device.clone(), conv: conv.map(Mutex::new), cpu };
+        let pool_size = pool_size.clone();
+        let area_id = o.area; // (a plain number: window handles can't cross threads)
+        let mut last = i64::MIN;
+        pool.FrameArrived(&TypedEventHandler::<Direct3D11CaptureFramePool, windows::core::IInspectable>::new(move |p, _| {
+            let gpu = &gpu; // the whole bundle (see Gpu), not its parts one by one
+            arrived.fetch_add(1, Ordering::Relaxed);
+            total_arrived.fetch_add(1, Ordering::SeqCst);
+            let Some(p) = p.as_ref() else { return Ok(()) };
+            let res = (|| -> Result<()> {
+            let frame = step("next frame", p.TryGetNextFrame())?;
+            if stop.load(Ordering::Relaxed) {
+                return Ok(());
+            }
+            let t = frame.SystemRelativeTime()?.Duration;
+            // the window changed size: keep capturing at its new size (the video stays its first size)
+            let content = frame.ContentSize()?;
+            {
+                let mut ps = pool_size.lock().unwrap();
+                if content.Width != ps.Width || content.Height != ps.Height {
+                    step("resize capture", p.Recreate(&gpu.rt_device, DirectXPixelFormat::B8G8R8A8UIntNormalized, 3, content))?;
+                    *ps = content;
+                }
+            }
+            // faster than the chosen frame rate (a 240 Hz game): skip in between
+            if last != i64::MIN && t - last < frame_len - frame_len / 8 {
+                return Ok(());
+            }
+            let src: ID3D11Texture2D = step("frame texture", frame.Surface().and_then(|s| s.cast::<IDirect3DDxgiInterfaceAccess>()).and_then(|a| a.GetInterface()))?;
+            // the part we want: everything, or (area mode) where the window is right now
+            let region = match area_id.map(|h| HWND(h as usize as *mut _)) {
+                Some(hw) => match window_region(hw, content) {
+                    Some(b) => b,
+                    None => return Ok(()), // minimised or off this screen: skip
+                },
+                None => D3D11_BOX { left: 0, top: 0, front: 0, right: content.Width.max(2) as u32, bottom: content.Height.max(2) as u32, back: 1 },
+            };
+            if let Some((nv12, staging)) = &gpu.cpu {
+                // the processor encodes: convert on the graphics card, then read it into memory
+                last = t;
+                let wr = writer.lock().unwrap();
+                match &gpu.conv {
+                    Some(c) => step("convert", c.lock().unwrap().convert(&src, &region, nv12))?,
+                    None => {
+                        let b = D3D11_BOX { right: region.left + (region.right - region.left).min(w), bottom: region.top + (region.bottom - region.top).min(h), ..region };
+                        gpu.ctx.CopySubresourceRegion(nv12, 0, 0, 0, 0, &src, 0, Some(&b));
+                    }
+                }
+                gpu.ctx.CopyResource(staging, nv12);
+                let mut map = D3D11_MAPPED_SUBRESOURCE::default();
+                step("read frame", gpu.ctx.Map(staging, 0, D3D11_MAP_READ, 0, Some(&mut map)))?;
+                // NV12: Y rows, then half as many UV rows; BGRA: 4 bytes a pixel
+                let (row, rows) = if gpu.conv.is_some() { (w as usize, (h + h / 2) as usize) } else { (w as usize * 4, h as usize) };
+                let buf = MFCreateMemoryBuffer((row * rows) as u32)?;
+                let mut p = std::ptr::null_mut();
+                buf.Lock(&mut p, None, None)?;
+                for y in 0..rows {
+                    std::ptr::copy_nonoverlapping((map.pData as *const u8).add(y * map.RowPitch as usize), p.add(y * row), row);
+                }
+                buf.Unlock()?;
+                gpu.ctx.Unmap(staging, 0);
+                buf.SetCurrentLength((row * rows) as u32)?;
+                let sample = MFCreateSample()?;
+                sample.AddBuffer(&buf)?;
+                let _ = t0.compare_exchange(-1, t, Ordering::SeqCst, Ordering::SeqCst);
+                step("frame time", sample.SetSampleTime(t - t0.load(Ordering::SeqCst)).and_then(|_| sample.SetSampleDuration(frame_len)))?;
+                step("encode", wr.sink.WriteSample(wr.video, &sample))?;
+                frames.fetch_add(1, Ordering::Relaxed);
+                frames_total.fetch_add(1, Ordering::SeqCst);
+                return Ok(());
+            }
+            let sample = match gpu.alloc.AllocateSample() {
+                Ok(s) => s,
+                Err(_) => {
+                    dropped.fetch_add(1, Ordering::Relaxed); // the encoder's behind: drop rather than pile up
+                    return Ok(());
+                }
+            };
+            last = t;
+            let mut dst: *mut core::ffi::c_void = std::ptr::null_mut();
+            step("encoder frame", sample.GetBufferByIndex(0).and_then(|b| b.cast::<IMFDXGIBuffer>()).and_then(|b| b.GetResource(&ID3D11Texture2D::IID, &mut dst)))?;
+            let dst = ID3D11Texture2D::from_raw(dst);
+            let wr = writer.lock().unwrap();
+            step("convert", gpu.conv.as_ref().unwrap().lock().unwrap().convert(&src, &region, &dst))?;
+            let _ = t0.compare_exchange(-1, t, Ordering::SeqCst, Ordering::SeqCst);
+            step("frame time", sample.SetSampleTime(t - t0.load(Ordering::SeqCst)).and_then(|_| sample.SetSampleDuration(frame_len)))?;
+            step("encode", wr.sink.WriteSample(wr.video, &sample))?;
+            frames.fetch_add(1, Ordering::Relaxed);
+            frames_total.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+            })();
+            if let Err(e) = res {
+                *last_error.lock().unwrap() = format!("{e}");
+            }
+            Ok(())
+        }))?;
+    }
+
+    // the sound, on its own thread, on the same clock
+    let audio_thread = audio_target.map(|(pid, include)| {
+        let (writer, t0, stop, heard) = (writer.clone(), t0.clone(), stop.clone(), heard.clone());
+        std::thread::spawn(move || {
+            let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+            let mut next = 0i64; // where the sound track has reached (100 ns units)
+            let _ = audio::capture(pid, include, &mut |pcm: &[u8], qpc: u64| {
+                if stop.load(Ordering::Relaxed) {
+                    return false;
+                }
+                let start = t0.load(Ordering::SeqCst);
+                if start < 0 {
+                    return true; // no picture yet
+                }
+                let mut at = qpc as i64 - start;
+                let len = (pcm.len() as i64 / 8) * 10_000_000 / 48_000;
+                if at + len <= 0 {
+                    return true;
+                }
+                // the program was silent for a while (Windows sends nothing then): fill the gap
+                let wr = writer.lock().unwrap();
+                let Some(stream) = wr.audio else { return false };
+                if at > next + 200_000 {
+                    let _ = write_audio(&wr.sink, stream, &vec![0u8; (((at - next) * 48_000 / 10_000_000) as usize) * 8], next);
+                    next = at;
+                }
+                at = at.max(next);
+                let ok = write_audio(&wr.sink, stream, pcm, at).is_ok();
+                heard.store(true, Ordering::SeqCst);
+                next = at + len;
+                ok
+            });
+        })
+    });
+
+    session.StartCapture()?;
+    say(&format!("started {} {} {w} {h} {}", wr_name(&writer), if on_gpu { "gpu" } else { "cpu" }, o.bitrate));
+
+    // progress every second, until "stop" (or the app goes away)
+    {
+        let (frames, dropped, stop, out, mem) = (frames.clone(), dropped.clone(), stop.clone(), o.out.clone(), memory.clone());
+        let (arrived, last_error) = (arrived.clone(), last_error.clone());
+        std::thread::spawn(move || {
+            while !stop.load(Ordering::Relaxed) {
+                std::thread::sleep(std::time::Duration::from_secs(1));
+                let bytes = match &mem {
+                    Some(m) => m.held().1 as u64,
+                    None => std::fs::metadata(&out).map(|m| m.len()).unwrap_or(0),
+                };
+                say(&format!("stat {} {} {bytes}", frames.swap(0, Ordering::Relaxed), dropped.swap(0, Ordering::Relaxed)));
+                // frames came from Windows but didn't make it into the file: say why
+                let a = arrived.swap(0, Ordering::Relaxed);
+                let e = std::mem::take(&mut *last_error.lock().unwrap());
+                if !e.is_empty() {
+                    say(&format!("warn {a} frames arrived; last problem: {e}"));
+                }
+            }
+        });
+    }
+    let stdin = std::io::stdin();
+    for line in stdin.lock().lines() {
+        let Ok(line) = line else { break };
+        let line = line.trim();
+        if line == "stop" {
+            break;
+        }
+        // replay: "save <path> <seconds>" (the path may have spaces; seconds is last)
+        if let (Some(m), Some(rest)) = (&memory, line.strip_prefix("save ")) {
+            let (path, secs) = rest.rsplit_once(' ').map(|(p, s)| (p, s.parse().unwrap_or(30))).unwrap_or((rest, 30));
+            match m.save(path, secs) {
+                Ok(got) => say(&format!("saved {got} {path}")),
+                Err(e) => say(&format!("error couldn't save the clip: {e}")),
+            }
+        }
+    }
+    if memory.is_some() {
+        // nothing to finish: what wasn't saved is let go
+        stop.store(true, Ordering::SeqCst);
+        let _ = session.Close();
+        let _ = pool.Close();
+        say("done");
+        return Ok(());
+    }
+    stop.store(true, Ordering::SeqCst);
+    let _ = session.Close();
+    let _ = pool.Close();
+    if let Some(t) = audio_thread {
+        let _ = t.join();
+    }
+    let wr = writer.lock().unwrap();
+    // the program never made a sound: the MP4 writer won't finish an empty track, so give it a moment of silence
+    if let Some(a) = wr.audio {
+        if !heard.load(Ordering::SeqCst) {
+            let _ = write_audio(&wr.sink, a, &vec![0u8; 4800 * 8], 0);
+        }
+    }
+    if frames_total.load(Ordering::SeqCst) == 0 {
+        let why = if total_arrived.load(Ordering::SeqCst) == 0 { "Windows sent no picture (is the window minimised, or is there no desktop?)" } else { "pictures arrived but none could be recorded" };
+        return Err(windows::core::Error::new(HRESULT(0x8000_4005u32 as i32), why));
+    }
+    wr.sink.Finalize()?;
+    drop(wr);
+    say("done");
+    let _ = MFShutdown();
+    Ok(())
+}
+
+unsafe fn bgra_texture(device: &ID3D11Device, w: u32, h: u32, staging: bool) -> Result<ID3D11Texture2D> {
+    let desc = D3D11_TEXTURE2D_DESC {
+        Width: w,
+        Height: h,
+        MipLevels: 1,
+        ArraySize: 1,
+        Format: windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM,
+        SampleDesc: windows::Win32::Graphics::Dxgi::Common::DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+        Usage: if staging { D3D11_USAGE_STAGING } else { D3D11_USAGE_DEFAULT },
+        BindFlags: if staging { 0 } else { D3D11_BIND_RENDER_TARGET.0 as u32 },
+        CPUAccessFlags: if staging { D3D11_CPU_ACCESS_READ.0 as u32 } else { 0 },
+        MiscFlags: 0,
+    };
+    let mut t = None;
+    device.CreateTexture2D(&desc, None, Some(&mut t))?;
+    Ok(t.unwrap())
+}
+
+/// Where a window is on its monitor's captured picture (physical pixels), clipped to it.
+/// None when it's minimised or not on that monitor.
+unsafe fn window_region(hwnd: HWND, frame: windows::Graphics::SizeInt32) -> Option<D3D11_BOX> {
+    if IsIconic(hwnd).as_bool() {
+        return None;
+    }
+    let mut r = RECT::default();
+    DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, &mut r as *mut _ as *mut _, std::mem::size_of::<RECT>() as u32).ok()?;
+    let mon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+    let mut mi = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
+    GetMonitorInfoW(mon, &mut mi).ok().ok()?;
+    let (ox, oy) = (mi.rcMonitor.left, mi.rcMonitor.top);
+    let l = (r.left - ox).clamp(0, frame.Width);
+    let t = (r.top - oy).clamp(0, frame.Height);
+    let rr = (r.right - ox).clamp(0, frame.Width);
+    let b = (r.bottom - oy).clamp(0, frame.Height);
+    (rr - l >= 16 && b - t >= 16).then_some(D3D11_BOX { left: l as u32, top: t as u32, front: 0, right: rr as u32, bottom: b as u32, back: 1 })
+}
+
+fn wr_name(w: &Arc<Mutex<Writer>>) -> &'static str {
+    w.lock().unwrap().name
+}
+
+unsafe fn write_audio(sink: &IMFSinkWriter, stream: u32, pcm: &[u8], at: i64) -> Result<()> {
+    if pcm.is_empty() {
+        return Ok(());
+    }
+    let buf = MFCreateMemoryBuffer(pcm.len() as u32)?;
+    let mut p = std::ptr::null_mut();
+    buf.Lock(&mut p, None, None)?;
+    std::ptr::copy_nonoverlapping(pcm.as_ptr(), p, pcm.len());
+    buf.Unlock()?;
+    buf.SetCurrentLength(pcm.len() as u32)?;
+    let s = MFCreateSample()?;
+    s.AddBuffer(&buf)?;
+    s.SetSampleTime(at)?;
+    s.SetSampleDuration((pcm.len() as i64 / 8) * 10_000_000 / 48_000)?;
+    sink.WriteSample(stream, &s)
+}
