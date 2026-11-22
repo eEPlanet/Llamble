@@ -1,0 +1,84 @@
+plugins {
+    id "com.android.application"
+}
+
+// version comes from the release (CI passes -PversionName=0.2.N); local builds are 0.0.1
+def ver = (project.findProperty("versionName") ?: "0.0.1").toString()
+def parts = ver.tokenize(".").collect { it.isInteger() ? it.toInteger() : 0 } + [0, 0, 0]
+def verCode = parts[0] * 100000000 + parts[1] * 1000000 + parts[2]   // 0.1.89 -> 1000089
+
+android {
+    namespace "com.llamble.app"
+    compileSdk 36
+
+    defaultConfig {
+        applicationId "com.llamble.app"
+        minSdk 29          // Android 10+
+        targetSdk 36       // Android 16 (Google Play's requirement)
+        versionCode Math.max(1, verCode)
+        versionName ver
+    }
+
+    // Two versions of the app from the same code:
+    //  - direct: the APK on GitHub releases, which updates itself
+    //  - play:   the Google Play build (.aab); Play does the updating (its rules forbid an app
+    //            updating itself), so it has no updater and can't install apps
+    flavorDimensions = ["store"]
+    productFlavors {
+        direct {
+            dimension "store"
+            buildConfigField "boolean", "SELF_UPDATE", "true"
+        }
+        play {
+            dimension "store"
+            buildConfigField "boolean", "SELF_UPDATE", "false"
+        }
+    }
+    buildFeatures {
+        buildConfig true
+    }
+
+    // The release key lives only in GitHub's secrets (never in the repo). Every build is
+    // signed with the same key, so new versions install over old ones.
+    signingConfigs {
+        release {
+            def ks = System.getenv("LLAMBLE_KEYSTORE")
+            if (ks) {
+                storeFile file(ks)
+                storePassword System.getenv("LLAMBLE_KEYSTORE_PASSWORD")
+                keyAlias "llamble"
+                keyPassword System.getenv("LLAMBLE_KEYSTORE_PASSWORD")
+            }
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+            if (System.getenv("LLAMBLE_KEYSTORE")) signingConfig signingConfigs.release
+            else signingConfig signingConfigs.debug
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    androidResources {
+        // the web app's files are served as they are
+        noCompress += ["wasm", "onnx", "tflite", "binarypb"]
+    }
+}
+
+// The web app (built by `npm run build` in client/) goes in as assets/www.
+def webDist = file("../../client/dist")
+tasks.register("copyWebApp", Copy) {
+    from webDist
+    into layout.buildDirectory.dir("generated/www/www")
+    doFirst {
+        if (!new File(webDist, "index.html").exists())
+            throw new GradleException("Build the web app first: cd client && npm run build")
+    }
+}
+android.sourceSets.main.assets.srcDirs += layout.buildDirectory.dir("generated/www").get().asFile
+preBuild.dependsOn "copyWebApp"

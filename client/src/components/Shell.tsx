@@ -1,0 +1,409 @@
+import { RecordingBar } from "./RecordingBar";
+import { refreshVoicemailCount, UrgentAlert, useVoicemailCount, VoicemailPage } from "./VoiceMessage";
+import { CallScreens, CallStrip } from "./Calls";
+import { useEffect, useState } from "react";
+import { api, media as mediaSrc } from "../api";
+import { usePeopleName } from "../store";
+import { can, currentChannelId, homeOf, isMessages, isUnread, onEvent, openFriend, openGuildView, openHome, openMessages, selectChannel, showMobileNav, useStore } from "../store";
+import { useIsPhone } from "../phone";
+import { Board, useUnreadNotes } from "./Home";
+import { P } from "../types";
+import { copy, openMenu, openModal, toast, useUI } from "../ui";
+import { useVoice } from "../voice";
+import { ChatView } from "./ChatView";
+import { ContextMenu, GuildIcon, Icon, Toasts } from "./common";
+import { MemberList } from "./MemberList";
+import { PopoutOverlay } from "./Overlay";
+import { Popouts } from "./Popouts";
+import { ShowPrompts } from "./Show";
+import { Modals } from "./Modals";
+import { notifyResetRequest } from "./Recovery";
+import { Sidebar } from "./Sidebar";
+import { VoiceView } from "./VoiceView";
+import { Library } from "./Library";
+import { MyProfile } from "./Profile";
+import { FriendProfile, PartiesEmpty, PartyMembers, PartyView } from "./Friends";
+import { androidSend, isAndroidApp, useAndroidUpdate } from "../android";
+
+export function Shell() {
+  const ready = useStore((s) => s.ready);
+  const conn = useStore((s) => s.conn);
+  const channelId = useStore((s) => currentChannelId(s));
+  const channel = useStore((s) => (channelId ? s.channels[channelId] : undefined));
+  const memberListOpen = useStore((s) => s.memberListOpen);
+  const selectedGuild = useStore((s) => s.selectedGuild);
+  const guildsForBack = useStore((s) => s.guilds);
+  const peopleNameForBack = usePeopleName();
+  const homePage = useStore((s) => s.homePage);
+  const mobileMain = useStore((s) => s.mobileMain);
+  const mobile = useIsPhone();
+  // phones: the member list slides over the chat when asked for, so it starts closed
+  useEffect(() => {
+    if (mobile) useStore.setState({ memberListOpen: false });
+  }, [mobile]);
+  const guildView = useStore((s) => s.guildView[s.selectedGuild]);
+  const [update, setUpdate] = useState<string | null>(null);
+  // family & account notices
+  useEffect(
+    () =>
+      onEvent((t, d) => {
+        const me = useStore.getState().me;
+        if (t === "KID_REQUEST") {
+          const what = d.kind === "dm" ? `wants to chat with ${d.target?.display_name}` : `wants to join ${d.target?.name}`;
+          toast(`${d.kid?.display_name} ${what}. Open Settings → Family to answer.`);
+        }
+        if (t === "KID_REQUEST_DONE" && d.kid?.id === me?.id) {
+          const what = d.kind === "dm" ? `chat with ${d.target?.display_name}` : `join ${d.target?.name}`;
+          toast(d.status === "approved" ? `A parent said yes: you can ${what} now!` : `A parent said no to: ${what}.`);
+        }
+        if (t === "RESET_REQUEST") notifyResetRequest(d);
+      }),
+    [],
+  );
+  useEffect(() => window.llambleNative?.onUpdateReady((v) => setUpdate(v ?? "")), []);
+
+  if (!ready) {
+    return (
+      <div className="loading-screen">
+        <div className="titlebar-drag" />
+        <div className="spinner" />
+        <div className="muted">{conn === "closed" ? "Reconnecting to server…" : "Connecting…"}</div>
+      </div>
+    );
+  }
+
+  // phones: the top-left button goes back to the list this page came from, and says which
+  const backLabel =
+    selectedGuild === "@home" ? "Home" : isMessages(selectedGuild) ? "Talk" : selectedGuild === "@friends" ? peopleNameForBack : guildsForBack[selectedGuild]?.name ?? "Back";
+  return (
+    <div className={"shell" + (mobile ? (mobileMain ? " m-main" : " m-nav") : "")}>
+      <div className="titlebar">
+        {mobile && mobileMain && (
+          <button className="m-menu" aria-label={`Back to ${backLabel}`} onClick={() => showMobileNav(true)}>
+            <Icon name="chevron-left" size={20} /> <span className="m-menu-label">{backLabel}</span>
+          </button>
+        )}
+        <span className="titlebar-name">Llamble</span>
+        {conn !== "open" && <span className="conn-warn">Reconnecting…</span>}
+        {update !== null ? (
+          <button className="update-pill" onClick={() => window.llambleNative?.installUpdate()} title="Restart to update">
+            Update {update} ready — restart
+          </button>
+        ) : (
+          <VersionNotice />
+        )}
+      </div>
+      <CallStrip />
+      <div className="layout">
+        {/* phones: picking something in the list opens it full screen */}
+        <div
+          className="nav-pane"
+          onClickCapture={(e) => {
+            const row = (e.target as Element).closest(".channel, .dm-row");
+            if (mobile && row && !row.querySelector(".soon-tag")) setTimeout(() => showMobileNav(false), 0);
+          }}
+        >
+          <GuildBar />
+          <Sidebar />
+        </div>
+        <main className="main">
+          {selectedGuild === "@home" ? (
+            homePage === "library" ? (
+              <Library />
+            ) : homePage === "profile" ? (
+              <MyProfile />
+            ) : homePage === "voicemail" ? (
+              <VoicemailPage />
+            ) : (
+              <Board key="@home" scope="@home" />
+            )
+          ) : guildView ? (
+            <Board key={selectedGuild} scope={selectedGuild} />
+          ) : channel ? (
+            channel.kind === "voice" ? (
+              <VoiceView channel={channel} />
+            ) : channel.kind === "party" ? (
+              <PartyView channel={channel} />
+            ) : (
+              <ChatView key={channel.id} channel={channel} />
+            )
+          ) : selectedGuild === "@friends" ? (
+            <FriendProfile />
+          ) : selectedGuild === "@voicemail" ? (
+            <VoicemailPage />
+          ) : selectedGuild === "@parties" ? (
+            <PartiesEmpty />
+          ) : selectedGuild === "@me" ? (
+            <EmptyMain home />
+          ) : (
+            <EmptyMain home={false} />
+          )}
+        </main>
+        {channel?.kind === "party" && memberListOpen && <PartyMembers channel={channel} />}
+        {mobile && channel && (channel.kind === "text" || channel.kind === "party") && memberListOpen && <div className="member-backdrop" onClick={() => useStore.setState({ memberListOpen: false })} />}
+        {channel && channel.guild_id && channel.kind === "text" && memberListOpen && <MemberList guildId={channel.guild_id} />}
+      </div>
+      <CallScreens />
+      <UrgentAlert />
+      <Modals />
+      <ContextMenu />
+      <Toasts />
+      <PopoutOverlay />
+      <Popouts />
+      <ShowPrompts />
+      <RecordingBar />
+      <Lightbox />
+    </div>
+  );
+}
+
+function EmptyMain({ home }: { home: boolean }) {
+  const bot = useStore((s) => s.config.bot);
+  return (
+    <div className="empty-main">
+      <div className="empty-art">💬</div>
+      <h2>{home ? "No conversation selected" : "No channels yet"}</h2>
+      <p className="muted">{home ? "Pick a conversation from the list, or message a friend from Friends." : "Create a channel to get started."}</p>
+      {home && bot && (
+        <button
+          className="btn primary"
+          onClick={async () => {
+            const dm = await api("/api/bot/dm", { method: "POST" });
+            selectChannel("@me", dm.id);
+          }}
+        >
+          <Icon name="bot" size={16} /> Chat with {bot.name}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function GuildBar() {
+  const order = useStore((s) => s.guildOrder);
+  const guilds = useStore((s) => s.guilds);
+  const selected = useStore((s) => s.selectedGuild);
+  const me = useStore((s) => s.me);
+  const cfg = useStore((s) => s.config);
+  const unreadByGuild = useStore((s) => {
+    const out: Record<string, { unread: boolean; mentions: number }> = {};
+    for (const ch of Object.values(s.channels)) {
+      const key = homeOf(ch);
+      const o = (out[key] ||= { unread: false, mentions: 0 });
+      if (ch.kind !== "voice" && ch.kind !== "category" && isUnread(ch, s)) o.unread = true;
+      o.mentions += s.mentions[ch.id] || 0;
+    }
+    return JSON.stringify(out);
+  });
+  const unread = JSON.parse(unreadByGuild) as Record<string, { unread: boolean; mentions: number }>;
+  // conversations with anything unread (not just mentions), so new DMs are noticeable
+  const unreadDms = useStore((s) => Object.values(s.channels).filter((c) => c.kind === "dm" && isUnread(c, s)).length);
+  const unreadParties = useStore((s) => Object.values(s.channels).filter((c) => c.kind === "party" && isUnread(c, s)).length);
+  const requests = useStore((s) => Object.values(s.friends).filter((f) => f.state === "incoming").length);
+  const voiceGuild = useStore((s) => {
+    const cid = useVoice.getState().channelId;
+    return cid ? s.channels[cid]?.guild_id : null;
+  });
+  useVoice((v) => v.channelId);
+
+  const canCreate = cfg.guild_create === "all" || me?.is_admin;
+  const unreadNotes = useUnreadNotes();
+  const vmCount = useVoicemailCount((v) => v.n);
+  useEffect(() => refreshVoicemailCount(), []);
+  const inMessages = isMessages(selected);
+  const peopleName = usePeopleName();
+  const msgCount = Math.max(unreadDms, unread["@me"]?.mentions || 0) + Math.max(unreadParties, unread["@parties"]?.mentions || 0) + vmCount;
+
+  return (
+    <nav className="guildbar">
+      <div className="guild-wrap">
+        <span className={"guild-pill" + (selected === "@home" ? " active" : "")} />
+        <button className={"guild-logo" + (selected === "@home" ? " active" : "")} title="Home: notes for you, who's around, highlights" onClick={() => openHome()}>
+          <img src="./icon-192.png" alt="Llamble" draggable={false} />
+          {unreadNotes ? <span className="badge">{unreadNotes}</span> : null}
+        </button>
+      </div>
+      <div className="guild-sep" />
+      <div className="guild-wrap">
+        <span className={"guild-pill" + (inMessages ? " active" : msgCount ? " unread" : "")} />
+        <button
+          className={"guild-btn dms" + (inMessages ? " active" : "") + (msgCount ? " has-unread" : "")}
+          onClick={() => openMessages()}
+          title={msgCount ? `Talk · ${msgCount} new` : "Talk: calls and chats with people, parties and voicemail"}
+        >
+          <Icon name="talk" size={22} />
+          {msgCount ? <span className="badge">{msgCount}</span> : null}
+        </button>
+      </div>
+      <div className="guild-wrap">
+        <span className={"guild-pill" + (selected === "@friends" ? " active" : requests ? " unread" : "")} />
+        <button
+          className={"guild-btn dms" + (selected === "@friends" ? " active" : "")}
+          onClick={() => openFriend(useStore.getState().selectedFriend)}
+          title={requests ? `${peopleName} · ${requests} new request${requests > 1 ? "s" : ""}` : peopleName}
+        >
+          <Icon name="users" size={22} />
+          {requests ? <span className="badge">{requests}</span> : null}
+        </button>
+      </div>
+      <div className="guild-sep" />
+      {order.map((id) => {
+        const g = guilds[id];
+        if (!g) return null;
+        const u = unread[id];
+        return (
+          <div key={id} className="guild-wrap">
+            <span className={"guild-pill" + (selected === id ? " active" : u?.unread ? " unread" : "")} />
+            <button
+              className={"guild-btn" + (selected === id ? " active" : "") + (g.icon_file_id ? " has-img" : "")}
+              title={g.name}
+              onClick={() => openGuildView(id)}
+              onContextMenu={(e) =>
+                openMenu(e, [
+                  { label: "Invite People", onClick: () => openModal({ kind: "invite", guildId: id }), disabled: !can(id, P.CREATE_INVITE) },
+                  { label: "Mark As Read", onClick: () => markGuildRead(id) },
+                  { separator: true, label: "" },
+                  { label: "Server Settings", onClick: () => openModal({ kind: "serverSettings", guildId: id }), disabled: !can(id, P.MANAGE_GUILD) && !can(id, P.MANAGE_ROLES) },
+                  { label: "Copy Server ID", onClick: () => copy(id, "ID copied") },
+                ])
+              }
+            >
+              <GuildIcon name={g.name} iconId={g.icon_file_id} />
+              {voiceGuild === id && <span className="voice-dot" title="You're in voice here"><Icon name="speaker" size={10} stroke={3} /></span>}
+              {u?.mentions ? <span className="badge">{u.mentions}</span> : null}
+            </button>
+          </div>
+        );
+      })}
+      {canCreate && (
+        <button className="guild-btn add" title="Create a server" onClick={() => openModal({ kind: "createGuild" })}>
+          <Icon name="plus" size={22} />
+        </button>
+      )}
+      <button className="guild-btn add" title="Join with an invite" onClick={() => openModal({ kind: "joinInvite" })}>
+        <Icon name="link" size={20} />
+      </button>
+    </nav>
+  );
+}
+
+export function markGuildRead(guildId: string) {
+  const s = useStore.getState();
+  for (const ch of Object.values(s.channels)) {
+    if (ch.guild_id === guildId && ch.last_message_id && isUnread(ch, s)) {
+      api(`/api/channels/${ch.id}/ack`, { body: { message_id: ch.last_message_id } }).catch(() => {});
+    }
+  }
+}
+
+function Lightbox() {
+  const lb = useUI((s) => s.lightbox);
+  useEffect(() => {
+    if (!lb) return;
+    const k = (e: KeyboardEvent) => {
+      if (e.key === "Escape") useUI.setState({ lightbox: null });
+      if (e.key === "ArrowRight") useUI.setState({ lightbox: { ...lb, index: (lb.index + 1) % lb.items.length } });
+      if (e.key === "ArrowLeft") useUI.setState({ lightbox: { ...lb, index: (lb.index - 1 + lb.items.length) % lb.items.length } });
+    };
+    window.addEventListener("keydown", k);
+    return () => window.removeEventListener("keydown", k);
+  }, [lb]);
+  if (!lb) return null;
+  const f = lb.items[lb.index];
+  return (
+    <div className="lightbox" onClick={() => useUI.setState({ lightbox: null })}>
+      <img src={mediaSrc(f.url)} alt={f.filename} onClick={(e) => e.stopPropagation()} />
+      <div className="lightbox-bar" onClick={(e) => e.stopPropagation()}>
+        <span>{f.filename}</span>
+        <a href={mediaSrc(f.url)} download={f.filename} className="btn small">
+          <Icon name="download" size={14} /> Open original
+        </a>
+        {lb.items.length > 1 && (
+          <span className="muted">
+            {lb.index + 1} / {lb.items.length}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
+/** "1.2.10" > "1.2.9"; non-numeric parts count as 0 */
+export function newer(a?: string, b?: string) {
+  if (!a || !b) return false;
+  const pa = a.split(".").map((x) => parseInt(x) || 0);
+  const pb = b.split(".").map((x) => parseInt(x) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) > (pb[i] || 0);
+  }
+  return false;
+}
+
+/** The server announces its version; anyone on an older app (or an old cached web page) is told to update. */
+function VersionNotice() {
+  const config = useStore((s) => s.config);
+  const isAdmin = useStore((s) => !!s.me?.is_admin);
+  const [mine, setMine] = useState<string>(window.llambleNative ? "" : __APP_VERSION__);
+  const [status, setStatus] = useState<{ state: string; percent?: number; message?: string } | null>(null);
+  const [hidden, setHidden] = useState("");
+  const androidUpdate = useAndroidUpdate();
+  useEffect(() => {
+    window.llambleNative?.version().then(setMine).catch(() => {});
+    return window.llambleNative?.onUpdateStatus?.(setStatus);
+  }, []);
+  const server = config.version;
+  if (!mine || !server || server === "0.0.0" || mine === "0.0.0" || hidden === server) return null;
+  if (isAndroidApp) {
+    // the phone app updates from its own downloads, not the server's: only when one exists
+    return androidUpdate ? (
+      <button className="update-pill" onClick={() => androidSend("check-update")}>
+        Llamble {androidUpdate} is out — update
+      </button>
+    ) : null;
+  }
+  if (newer(server, mine)) {
+    if (!window.llambleNative) {
+      // web: the server already has the new page, the browser just has an old copy
+      return (
+        <button
+          className="update-pill"
+          onClick={async () => {
+            try {
+              const regs = await navigator.serviceWorker?.getRegistrations();
+              await Promise.all((regs || []).map((r) => r.unregister()));
+              const keys = await caches?.keys();
+              await Promise.all((keys || []).map((k) => caches.delete(k)));
+            } catch {}
+            location.reload();
+          }}
+        >
+          New version {server} — reload
+        </button>
+      );
+    }
+    if (status?.state === "error") {
+      return (
+        <a className="update-pill" href={config.client_download} target="_blank" rel="noreferrer" title={status.message}>
+          Llamble {server} is out — download it
+        </a>
+      );
+    }
+    if (status?.state === "downloading" || status?.state === "checking") {
+      return <span className="update-pill">Updating to {server}… {status.percent ? `${status.percent}%` : ""}</span>;
+    }
+    return (
+      <button className="update-pill" onClick={() => window.llambleNative?.checkUpdate?.()}>
+        Llamble {server} is out — update now
+      </button>
+    );
+  }
+  if (isAdmin && newer(mine, server)) {
+    return (
+      <button className="update-pill subtle" title="Click to hide" onClick={() => setHidden(server)}>
+        Your server is on {server}; update the Llamble server to get {mine}
+      </button>
+    );
+  }
+  return null;
+}
