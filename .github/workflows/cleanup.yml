@@ -1,0 +1,27 @@
+# Run by hand (Actions → Clean up old releases → Run workflow): deletes every release, tag and
+# branch that isn't the current main, so only the newest code and its release remain.
+name: Clean up old releases
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete old releases, tags and branches
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          R: ${{ github.repository }}
+        run: |
+          head=$(gh api "repos/$R/commits/main" --jq .sha)
+          for t in $(gh api "repos/$R/tags?per_page=100" --paginate --jq ".[] | select(.commit.sha != \"$head\") | .name"); do
+            id=$(gh api "repos/$R/releases/tags/$t" --jq .id 2>/dev/null) && gh api -X DELETE "repos/$R/releases/$id" && echo "deleted release $t"
+            gh api -X DELETE "repos/$R/git/refs/tags/$t" && echo "deleted tag $t"
+          done
+          for b in $(gh api "repos/$R/branches?per_page=100" --jq '.[].name'); do
+            [ "$b" != main ] && gh api -X DELETE "repos/$R/git/refs/heads/$b" && echo "deleted branch $b"
+          done
+          true

@@ -1,0 +1,28 @@
+# Third-party pieces bundled with Llamble
+
+Full list with every license text: `client/src/legal/third-party-licenses.txt` (made by `tools/third_party_licenses.py`; also in the app under Settings → About).
+
+| What | Used for | License |
+|---|---|---|
+| Google MediaPipe (tasks-vision, face landmarker, selfie segmenter) | camera effects, face filters, background blur | Apache-2.0 |
+| canvas-confetti | /confetti, /snow, /hearts chat effects | ISC |
+| fireworks-js | /fireworks chat effect | MIT |
+| LiveKit (server + livekit-client) | voice, video, screen share | Apache-2.0 |
+| Built-in soundboard clips (`client/public/sounds`) | soundboard | made for Llamble from scratch by `tools/make_sounds.py`; same license as Llamble |
+| stable-diffusion.cpp | pictures on the NAS and on lent GPUs | MIT |
+| FLUX.2 [klein] 4B / Z-Image Turbo (downloaded when turned on) | picture models | Apache-2.0 |
+| sherpa-onnx, Whisper, Kokoro (downloaded when turned on) | "Hey Llamble" speech | Apache-2.0 / MIT |
+
+## llamble-helper.exe (Windows app)
+
+Our own small Rust program (`client/native/llamble-helper`) that lists open windows for game
+detection and reads graphics card info. Its only runtime dependency is Microsoft's
+[`windows`](https://github.com/microsoft/windows-rs) crate (MIT or Apache-2.0); `syn`, `quote`
+and `proc-macro2` are used only while compiling it.
+
+## Noise suppression (mic)
+
+[@sapphi-red/web-noise-suppressor](https://github.com/sapphi-red/web-noise-suppressor) (MIT, no
+dependencies), pinned to 0.4.1 and copied into the app at build time (`client/scripts/copy-audio.cjs`), so
+it runs from Llamble's own files. It packages [RNNoise](https://github.com/xiph/rnnoise) (BSD-3-Clause,
+Xiph.Org), [GTCRN](https://github.com/Xiaobin-Rong/gtcrn) (MIT) and a noise gate.

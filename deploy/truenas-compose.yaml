@@ -1,0 +1,24 @@
+# Llamble for TrueNAS SCALE 24.10+  —  Apps → Discover → ⋮ → Install via YAML → paste this as-is.
+# Nothing to edit, nothing to copy to the NAS, no GitHub login. Storage is created automatically.
+# Then open http://NAS_IP:8090 (or the Llamble app) to create the admin account and pick the AI model.
+# Everything else (remote access, upload limits, bot name, GPU sharing...) is in the app:
+# Settings → Instance Admin.
+services:
+  llamble:
+    image: ghcr.io/eeplanet/llamble:latest
+    pull_policy: always
+    restart: unless-stopped
+    ports:
+      - "8090:8080"       # the app and web client on your home network
+      - "8443:8443"       # remote access (HTTPS) — only used if you turn it on
+      - "7881:7881"       # voice/video (TCP fallback)
+      - "7882:7882/udp"   # voice/video
+    volumes:
+      - llamble-data:/data
+    # Optional: let Llamble use the NAS's built-in graphics for pictures (Intel/AMD iGPU).
+    # Remove the # from the next two lines. Llamble's Settings → AI Model → Pictures says if more is needed.
+    # devices:
+    #   - /dev/dri:/dev/dri
+
+volumes:
+  llamble-data:
