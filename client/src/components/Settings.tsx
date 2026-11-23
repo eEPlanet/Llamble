@@ -24,6 +24,7 @@ import { RecoveryCodeSection } from "./Recovery";
 import { CameraFxPicker } from "./CameraFx";
 import { PicturesAdmin } from "./PicturesAdmin";
 import { BotToolsAdmin, GuildVoiceListen, MicTest, VoiceAiAdmin } from "./VoiceAi";
+import { WatchAdmin } from "./Watch";
 import { Recordings } from "./Library";
 import { ACCENTS, THEMES, applyAccent, applyTheme, currentAccent, currentTheme, customAccent, customBase, setCustomAccent, setCustomBase, themeFromBase } from "../theme";
 import { androidListener, androidSend, isAndroidApp } from "../android";
@@ -121,7 +122,7 @@ export function ServerSettings({ guildId, tab: initial }: { guildId: string; tab
       {tab === "delete" && (
         <div>
           <h2>Delete '{guild.name}'</h2>
-          <p className="muted">This permanently deletes every channel, message and file reference in this server.</p>
+          <p className="muted">This permanently deletes every space, message and file reference in this server.</p>
           <button
             className="btn red"
             onClick={() =>
@@ -469,8 +470,8 @@ function BotSettings({ guildId }: { guildId: string }) {
           onBlur={(e) => e.target.value !== s.system_prompt && save({ system_prompt: e.target.value })}
         />
       </label>
-      <div className="profile-section">Always-on channels</div>
-      <p className="muted small">In these channels it answers every message, no mention needed.</p>
+      <div className="profile-section">Always-on spaces</div>
+      <p className="muted small">In these spaces it answers every message, no mention needed.</p>
       <div className="chan-checks">
         {channels.map((c) => (
           <label key={c.id} className="check">
@@ -978,7 +979,7 @@ function AiSettings() {
           <h3>Lend this PC's graphics card to the server's AI bot?</h3>
           <ul>
             <li>Llamble will run <b>llama.cpp</b> on your best GPU{gpu ? ` (${gpu.name}${gpu.vram_mb ? `, ${(gpu.vram_mb / 1024).toFixed(0)} GB` : ""})` : ""} using a model file you choose.</li>
-            <li>When someone talks to the bot, the server sends the recent conversation to <b>this PC</b> to write the reply. Only conversations from channels you can already read are sent here.</li>
+            <li>When someone talks to the bot, the server sends the recent conversation to <b>this PC</b> to write the reply. Only conversations from spaces you can already read are sent here.</li>
             <li>It uses VRAM, power and some GPU time while answering. Games may stutter if a reply is generating.</li>
             <li>Nothing leaves your network except through your own Llamble server. You can turn it off anytime.</li>
           </ul>
@@ -1197,7 +1198,7 @@ function NotifSettings() {
   return (
     <div>
       <h2>Notifications</h2>
-      {flag("notifications", isAndroidApp ? "Notifications" : "Desktop notifications", "For direct messages and @mentions when you're not looking at that channel")}
+      {flag("notifications", isAndroidApp ? "Notifications" : "Desktop notifications", "For direct messages and @mentions when you're not looking at that chat")}
       {flag("sounds", "Sounds", "Message, join/leave, and mute sounds")}
       {flag("effects", "Screen effects", "Confetti, fireworks and the like when someone sends /confetti, /fireworks...")}
       {flag("autoEffects", "Effects from words", "\"Happy birthday\" and \"congrats\" set off confetti by themselves")}
@@ -1477,7 +1478,7 @@ function GpuSharing() {
       <div className="perm-row">
         <div>
           <div className="bold">Who can lend a GPU</div>
-          <div className="muted small">A lent GPU only ever receives conversations from channels its owner can already read.</div>
+          <div className="muted small">A lent GPU only ever receives conversations from spaces its owner can already read.</div>
         </div>
         <select value={pool.policy} onChange={(e) => setPolicy(e.target.value)} style={{ width: 200 }}>
           <option value="off">Off (server only)</option>
@@ -1706,6 +1707,8 @@ function ServerConfig() {
         </select>
       </label>
       <p className="muted small">Kid accounts never show up in search. Only a kid's parent can invite them, to a server the parent is in.</p>
+
+      <WatchAdmin f={f} set={set} />
 
       <div className="profile-section">AI bot</div>
       <label>
@@ -2368,14 +2371,14 @@ function OverlaySettings() {
 
       <ReplaySettings />
       <h3>What to show</h3>
-      {widgetRow("voice", "Voice", "People in your voice channel")}
+      {widgetRow("voice", "Voice", "People in your voice room")}
       {p.widgets.voice.on && (
         <div className="indent">
           {row(
             "Who to list",
             "",
             <select value={p.voiceMode} onChange={(e) => setOverlayPrefs({ voiceMode: e.target.value as any })}>
-              <option value="all">Everyone in the channel</option>
+              <option value="all">Everyone in the room</option>
               <option value="speaking">Only people talking</option>
             </select>,
           )}
@@ -2389,7 +2392,7 @@ function OverlaySettings() {
             "Messages from",
             "",
             <select value={p.chatSource} onChange={(e) => setOverlayPrefs({ chatSource: e.target.value as any })}>
-              <option value="open">The channel open in Llamble</option>
+              <option value="open">The space open in Llamble</option>
               <option value="mentions">Only DMs and @mentions</option>
             </select>,
           )}
@@ -2438,7 +2441,7 @@ function OverlaySettings() {
         "When",
         "",
         <select value={p.when} onChange={(e) => setOverlayPrefs({ when: e.target.value as any })}>
-          <option value="voice">Only while I'm in a voice channel</option>
+          <option value="voice">Only while I'm in a voice room</option>
           <option value="always">Always</option>
         </select>,
       )}

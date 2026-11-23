@@ -49,6 +49,8 @@ pub struct KidSettings {
     pub quiet: Quiet,
     /// whether the kid may delete their own messages
     pub can_delete: bool,
+    /// may join Watch Party spaces (off until a parent turns it on)
+    pub watch_party: bool,
 }
 
 impl Default for KidSettings {
@@ -60,6 +62,7 @@ impl Default for KidSettings {
             kid_safe_bot: true,
             quiet: Quiet::default(),
             can_delete: false,
+            watch_party: false,
         }
     }
 }

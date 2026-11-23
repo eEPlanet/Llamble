@@ -15,7 +15,7 @@ function Face({ name, avatar, speaking, size }: { name: string; avatar: string; 
 
 function VoiceWidget({ s }: { s: OverlaySnapshot }) {
   const p = useOverlayPrefs();
-  if (!s.inVoice) return <div className="ov-empty">Not in a voice channel</div>;
+  if (!s.inVoice) return <div className="ov-empty">Not in a voice room</div>;
   const list = p.voiceMode === "speaking" ? s.people.filter((x) => x.speaking) : s.people;
   return (
     <div className="ov-voice">

@@ -152,8 +152,11 @@ export function NotificationsDesk() {
 export function NotificationsSection() {
   const list = useNotices((s) => s.list);
   const unread = list.filter((n) => !n.read_at);
+  // nothing new: the box goes away and Right now takes the full width
+  if (!unread.length) return null;
   return (
     <section className="hb-index hb-notices" data-hb-section="notifications">
+      <div className="hb-notices-inner">
       <div className="hb-notices-head">
         <h2 className="hb-index-title">Notifications</h2>
         {unread.length > 0 && <span className="hb-count">{unread.length} new</span>}
@@ -166,7 +169,7 @@ export function NotificationsSection() {
           <NoticeRow key={n.id} n={n} compact />
         ))}
       </div>
-      {!unread.length && <div className="hb-muted">Nothing new.</div>}
+      </div>
     </section>
   );
 }

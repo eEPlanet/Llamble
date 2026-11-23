@@ -116,7 +116,7 @@ export interface Role {
   deny?: number;
 }
 
-export type ChannelKind = "text" | "voice" | "category" | "dm" | "party";
+export type ChannelKind = "text" | "voice" | "category" | "dm" | "party" | "watch";
 
 export interface Channel {
   id: string;
@@ -134,6 +134,8 @@ export interface Channel {
   last_alert_id?: string | null;
   recipients?: User[];
   retention_days?: number | null;
+  /** staff locked the room: nobody new can come in */
+  locked?: boolean;
   /** parties: who made it (can rename it, remove people, delete it) */
   owner_id?: string | null;
 }
@@ -258,6 +260,8 @@ export const P = {
   MENTION_EVERYONE: 1 << 15,
   POST_NEWS: 1 << 16,
   ADD_HIGHLIGHTS: 1 << 17,
+  WATCH_RUN: 1 << 18,
+  LOCK_SPACES: 1 << 19,
   ADMINISTRATOR: 1 << 30,
 };
 export const ALL_PERMS = 2 ** 31 - 1;
@@ -266,18 +270,20 @@ export const GUEST_DENY = P.SEND | P.ATTACH | P.EMBED_LINKS | P.REACT | P.SPEAK 
 
 export const PERM_LABELS: [number, string, string][] = [
   [P.VIEW, "View Channels", "See channels and read messages"],
-  [P.SEND, "Send Messages", "Post messages in text channels"],
+  [P.SEND, "Send Messages", "Post messages in chats"],
   [P.ATTACH, "Attach Files", "Upload files and images"],
   [P.EMBED_LINKS, "Embed Links", "Links show rich previews"],
   [P.REACT, "Add Reactions", "React to messages with emoji"],
-  [P.CONNECT, "Connect", "Join voice channels"],
-  [P.SPEAK, "Speak", "Talk in voice channels"],
+  [P.CONNECT, "Connect", "Join Voice & Video and Watch Party rooms"],
+  [P.SPEAK, "Speak", "Talk in voice rooms"],
   [P.VIDEO, "Video & Screen Share", "Turn on camera or share screen"],
   [P.CREATE_INVITE, "Create Invite", "Invite new people"],
   [P.MANAGE_MESSAGES, "Manage Messages", "Delete other people's messages"],
-  [P.MANAGE_CHANNELS, "Manage Channels", "Create, edit and delete channels"],
+  [P.MANAGE_CHANNELS, "Manage Spaces", "Add, edit and delete spaces"],
   [P.MANAGE_ROLES, "Manage Roles", "Create roles and assign them"],
   [P.ADD_HIGHLIGHTS, "Add to Highlights", "Pin messages and recordings to the server's Highlights"],
+  [P.WATCH_RUN, "Run watch party", "In Watch Party spaces: play, pause, skip and remove anything in the queue, and let people talk"],
+  [P.LOCK_SPACES, "Lock spaces", "Lock and unlock Voice & Video and Watch Party spaces on the fly, so nobody new can come in"],
   [P.POST_NEWS, "Post news", "Write news for this server's Board"],
   [P.MANAGE_GUILD, "Manage Server", "Rename the server, manage invites and nicknames"],
   [P.KICK, "Kick Members", "Remove members from the server"],

@@ -7,6 +7,7 @@ import { usePeopleName } from "../store";
 import { can, currentChannelId, homeOf, isMessages, isUnread, onEvent, openFriend, openGuildView, openHome, openMessages, selectChannel, showMobileNav, useStore } from "../store";
 import { useIsPhone } from "../phone";
 import { Board, useUnreadNotes } from "./Home";
+import { WatchView } from "./Watch";
 import { useUnreadNotices } from "../notifications";
 import { P } from "../types";
 import { copy, openMenu, openModal, toast, useUI } from "../ui";
@@ -124,6 +125,8 @@ export function Shell() {
           ) : channel ? (
             channel.kind === "voice" ? (
               <VoiceView channel={channel} />
+            ) : channel.kind === "watch" ? (
+              <WatchView key={channel.id} channel={channel} />
             ) : channel.kind === "party" ? (
               <PartyView channel={channel} />
             ) : (

@@ -58,6 +58,7 @@ pub async fn leave_voice(state: &Shared, user_id: &str) {
             crate::voicebot::forget_channel(&vs.channel_id);
         }
         broadcast_voice(state, &vs.channel_id, json!({ "user_id": user_id, "channel_id": null, "guild_id": vs.guild_id })).await;
+        crate::api::watch::left_room(state, &vs.channel_id, user_id).await;
         // the call is over: people added to it can't come back in
         if empty {
 
@@ -75,17 +76,36 @@ pub async fn join(State(state): State<Shared>, auth: AuthUser, Path(cid): Path<S
     // learned its address or after an update: give it a moment instead of failing the call
     crate::voice_server::wait_ready(&state, std::time::Duration::from_secs(12)).await;
     let ch = load_channel(&state.db, &cid).await?;
-    if !(ch.kind == "voice" || ch.kind == "dm" || ch.kind == "party") {
-        return Err(AppError::bad("not a voice channel"));
+    if !(ch.kind == "voice" || ch.kind == "dm" || ch.kind == "party" || ch.kind == "watch") {
+        return Err(AppError::bad("that isn't a voice room"));
+    }
+    if ch.kind == "watch" {
+        if !state.s().watch_party {
+            return Err(AppError::forbidden_msg("Watch Party is turned off on this Llamble"));
+        }
+        crate::api::watch::kid_may_join(&state, &auth).await?;
     }
     // someone added to a DM or party call joins with talk + video, without seeing the chat
     let guest = ch.guild_id.is_none() && is_guest(&cid, &auth.id);
     let p = if guest { perms::SPEAK | perms::VIDEO } else { require_channel(&state.db, &ch, &auth.id, perms::VIEW | perms::CONNECT).await? };
+    // a locked room: only people already in it, and staff who can lock rooms, get in
+    let already = state.hub.voice.get(&auth.id).map(|v| v.channel_id == cid).unwrap_or(false);
+    if ch.locked && !already && p & (perms::LOCK_SPACES | perms::MANAGE_CHANNELS) == 0 {
+        return Err(AppError::forbidden_msg("This space is locked right now."));
+    }
+    // a Watch Party already playing: late joiners come in with their mic held (no barging in)
+    let held = ch.kind == "watch" && p & perms::SPEAK != 0 && crate::api::watch::hold_on_join(&state, &cid, &auth.id, p).await;
     let mut sources = vec![];
-    if p & perms::SPEAK != 0 {
+    if p & perms::SPEAK != 0 && !held {
         sources.push("microphone");
     }
-    if p & perms::VIDEO != 0 {
+    if ch.kind == "watch" {
+        // a Watch Party: talk, plus a video file streamed from your device (sent as a
+        // "screen share" track; the app offers no real screen sharing or camera here)
+        if p & perms::VIDEO != 0 && state.s().watch_device_stream {
+            sources.extend(["screen_share", "screen_share_audio"]);
+        }
+    } else if p & perms::VIDEO != 0 {
         sources.extend(["camera", "screen_share", "screen_share_audio"]);
     }
     let user = get_user(&state.db, &auth.id).await?;
@@ -101,7 +121,7 @@ pub async fn join(State(state): State<Shared>, auth: AuthUser, Path(cid): Path<S
         user_id: auth.id.clone(),
         channel_id: cid.clone(),
         guild_id: ch.guild_id.clone(),
-        muted: p & perms::SPEAK == 0,
+        muted: p & perms::SPEAK == 0 || held,
         deafened: false,
         video: false,
         screen: false,
@@ -110,7 +130,7 @@ pub async fn join(State(state): State<Shared>, auth: AuthUser, Path(cid): Path<S
     broadcast_voice(&state, &cid, serde_json::to_value(&vs).unwrap()).await;
     ring_on_join(&state, &cid, &auth.id).await;
     let url = crate::voice_server::client_url(&state, &headers).await;
-    Ok(Json(json!({ "url": url, "token": token, "room": cid, "can_speak": p & perms::SPEAK != 0, "can_video": p & perms::VIDEO != 0 })))
+    Ok(Json(json!({ "url": url, "token": token, "room": cid, "can_speak": p & perms::SPEAK != 0 && !held, "held": held, "can_video": p & perms::VIDEO != 0 })))
 }
 
 pub async fn leave(State(state): State<Shared>, auth: AuthUser) -> ApiResult<Json<Value>> {
@@ -401,6 +421,49 @@ pub async fn sweep_call_parties(state: &Shared) {
             CALL_PARTY_EMPTY.remove(&id);
             tracing::info!("call party {id} was never kept: deleting it");
             crate::api::social::drop_party(state, &id).await;
+        }
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub struct LockReq {
+    pub locked: bool,
+}
+
+/// POST /api/channels/{cid}/lock {locked} — staff lock a room on the fly: nobody new comes in.
+pub async fn lock(State(state): State<Shared>, auth: AuthUser, Path(cid): Path<String>, Json(req): Json<LockReq>) -> ApiResult<Json<Value>> {
+    let ch = load_channel(&state.db, &cid).await?;
+    if ch.guild_id.is_none() || !["voice", "watch"].contains(&ch.kind.as_str()) {
+        return Err(AppError::bad("only Voice & Video and Watch Party spaces can be locked"));
+    }
+    let p = require_channel(&state.db, &ch, &auth.id, perms::VIEW).await?;
+    if p & (perms::LOCK_SPACES | perms::MANAGE_CHANNELS) == 0 {
+        return Err(AppError::forbidden_msg("you can't lock this space"));
+    }
+    sqlx::query("UPDATE channels SET locked = ? WHERE id = ?").bind(req.locked).bind(&cid).execute(&state.db).await?;
+    let ch = load_channel(&state.db, &cid).await?;
+    state.emit_guild(ch.guild_id.as_deref().unwrap_or_default(), "CHANNEL_UPDATE", &ch).await;
+    Ok(Json(serde_json::to_value(&ch).unwrap()))
+}
+
+/// Change what someone in a room may send, live (e.g. give a held Watch Party guest their mic).
+pub async fn set_sources(state: &Shared, room: &str, identity: &str, sources: &[&str]) -> bool {
+    let Some((key, secret)) = crate::voice_server::credentials(state).await else { return false };
+    let now = chrono_now();
+    let claims = json!({ "iss": key, "nbf": now - 10, "exp": now + 60, "video": { "room": room, "roomAdmin": true } });
+    let Ok(token) = jsonwebtoken::encode(&jsonwebtoken::Header::new(jsonwebtoken::Algorithm::HS256), &claims, &jsonwebtoken::EncodingKey::from_secret(secret.as_bytes())) else { return false };
+    let url = format!("{}/twirp/livekit.RoomService/UpdateParticipant", crate::voice_server::internal_url(state).await);
+    let srcs: Vec<String> = sources.iter().map(|s| s.to_uppercase()).collect();
+    let body = json!({ "room": room, "identity": identity, "permission": { "canSubscribe": true, "canPublish": !srcs.is_empty(), "canPublishData": true, "canPublishSources": srcs } });
+    match reqwest::Client::new().post(url).bearer_auth(token).json(&body).timeout(std::time::Duration::from_secs(5)).send().await {
+        Ok(r) if r.status().is_success() => true,
+        Ok(r) => {
+            tracing::warn!("voice server refused to change {identity}'s permissions: {}", r.status());
+            false
+        }
+        Err(e) => {
+            tracing::warn!("couldn't reach the voice server to change {identity}'s permissions: {e}");
+            false
         }
     }
 }

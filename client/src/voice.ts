@@ -30,6 +30,10 @@ export interface VoiceUI {
   shareSound?: string | null;
   speaking: string[];
   canSpeak: boolean;
+  /** Watch Party: came in while something was playing, so the mic is held for now */
+  held: boolean;
+  /** "Mute people": everyone else's voice is silenced for me (shows and movies still play) */
+  peopleMuted: boolean;
   canVideo: boolean;
   error: string | null;
   version: number;
@@ -50,6 +54,8 @@ export const useVoice = create<VoiceUI>(() => ({
   screen: false,
   speaking: [],
   canSpeak: true,
+  held: false,
+  peopleMuted: false,
   canVideo: true,
   error: null,
   version: 0,
@@ -367,12 +373,23 @@ function userVolume(uid: string): number {
   return Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 1;
 }
 
+/** "Mute people": silence everyone else's voices for me until I turn it off. Shared screens'
+ * and Watch Party sound keep playing. */
+export function setPeopleMuted(on: boolean) {
+  vset({ peopleMuted: on });
+  for (const p of room?.remoteParticipants.values() || []) {
+    try {
+      p.setVolume(on ? 0 : userVolume(p.identity), Track.Source.Microphone);
+    } catch {}
+  }
+}
+
 export function setUserVolume(uid: string, v: number) {
   v = Math.max(0, Math.min(1, v));
   prefs.set("vol." + uid, String(v));
   const p = room?.remoteParticipants.get(uid);
   try {
-    p?.setVolume(v);
+    p?.setVolume(vget().peopleMuted ? 0 : v);
     p?.setVolume(v, Track.Source.ScreenShareAudio);
   } catch (e) {
     console.warn("volume", e);
@@ -398,7 +415,8 @@ function attachAudio(track: RemoteTrack, p: RemoteParticipant) {
   if (out && "setSinkId" in el) (el as any).setSinkId(out).catch(() => {});
   audioBox.appendChild(el);
   try {
-    p.setVolume(userVolume(p.identity), track.source === Track.Source.ScreenShareAudio ? Track.Source.ScreenShareAudio : Track.Source.Microphone);
+    const share = track.source === Track.Source.ScreenShareAudio;
+    p.setVolume(!share && vget().peopleMuted ? 0 : userVolume(p.identity), share ? Track.Source.ScreenShareAudio : Track.Source.Microphone);
   } catch (e) {
     console.warn("volume", e); // never let a volume setting stop you hearing someone
   }
@@ -423,7 +441,7 @@ function scheduleRejoin(channelId: string) {
   if (Date.now() - rejoinStarted > 3 * 60_000) {
     wanted = null;
     rejoinStarted = 0;
-    vset({ channelId: null, status: "idle", error: "Lost the voice connection to the server. Click the voice channel to rejoin." });
+    vset({ channelId: null, status: "idle", error: "Lost the voice connection to the server. Click the room to rejoin." });
     bump();
     return;
   }
@@ -445,7 +463,7 @@ async function connect(channelId: string, rejoining: boolean) {
   }
   vset({ channelId, status: rejoining ? "reconnecting" : "connecting", error: null, camera: false, screen: false, speaking: [] });
   await refreshDevices();
-  let info: { url: string; token: string; can_speak: boolean; can_video: boolean };
+  let info: { url: string; token: string; can_speak: boolean; can_video: boolean; held?: boolean };
   vset({ step: "Asking your server to join" });
   try {
     // a request on a connection that died in the background can hang for ~40s: give up after
@@ -542,7 +560,7 @@ async function connect(channelId: string, rejoining: boolean) {
         return;
       }
       wanted = null;
-      const why = reason === DisconnectReason.DUPLICATE_IDENTITY ? "You joined voice from another device." : reason === DisconnectReason.PARTICIPANT_REMOVED ? "You were removed from the voice channel." : null;
+      const why = reason === DisconnectReason.DUPLICATE_IDENTITY ? "You joined voice from another device." : reason === DisconnectReason.PARTICIPANT_REMOVED ? "You were removed from the voice room." : null;
       stopSpeaking();
       localSpeaking = false;
       vset({ channelId: null, status: "idle", camera: false, screen: false, speaking: [], error: why });
@@ -568,7 +586,7 @@ async function connect(channelId: string, rejoining: boolean) {
   }
   if (room !== r) return;
   rejoinStarted = 0;
-  vset({ status: "connected", canSpeak: info.can_speak, canVideo: info.can_video, audioBlocked: !r.canPlaybackAudio });
+  vset({ status: "connected", canSpeak: info.can_speak, held: !!info.held, canVideo: info.can_video, audioBlocked: !r.canPlaybackAudio });
   if (!r.canPlaybackAudio) r.startAudio().then(() => vset({ audioBlocked: !r.canPlaybackAudio })).catch(() => {});
   if (!rejoining) sounds.join();
   if (info.can_speak) {
@@ -601,7 +619,7 @@ export async function leaveVoice(notify = true) {
   audioBox.innerHTML = "";
   stopSpeaking();
   localSpeaking = false;
-  vset({ channelId: null, status: "idle", camera: false, screen: false, speaking: [] });
+  vset({ channelId: null, status: "idle", camera: false, screen: false, speaking: [], held: false, peopleMuted: false });
   stopPtt();
   if (r) {
     await r.disconnect();
@@ -1023,6 +1041,16 @@ window.setInterval(recoverMic, 5000);
 
 // After the chat connection comes back (or the server restarted), make sure the server
 // still lists us in the call we're in, so others don't see us drop out.
+// Watch Party: the server gave a held guest their mic back
+onEvent((t, d) => {
+  if (t !== "WATCH_TALK" || d.channel_id !== vget().channelId) return;
+  vset({ held: false, canSpeak: !!d.can_speak });
+  syncServerState();
+  // the voice server needs a moment to apply the new permission before the mic can go out
+  const r = room;
+  if (r && d.can_speak && !vget().muted && !vget().deafened) setTimeout(() => room === r && setMic(r, true).catch(() => {}), 600);
+});
+
 onEvent((t, d) => {
   if (t !== "READY" || !room || !wanted || vget().status !== "connected") return;
   const me = d?.user?.id;

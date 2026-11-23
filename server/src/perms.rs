@@ -22,6 +22,10 @@ pub const MENTION_EVERYONE: i64 = 1 << 15;
 pub const POST_NEWS: i64 = 1 << 16;
 /// add messages and recordings to the server's Highlights
 pub const ADD_HIGHLIGHTS: i64 = 1 << 17;
+/// run a Watch Party: play, pause, skip and remove anything in the queue
+pub const WATCH_RUN: i64 = 1 << 18;
+/// lock and unlock rooms on the fly (nobody new can come in)
+pub const LOCK_SPACES: i64 = 1 << 19;
 pub const ADMINISTRATOR: i64 = 1 << 30;
 pub const ALL: i64 = (1 << 31) - 1;
 

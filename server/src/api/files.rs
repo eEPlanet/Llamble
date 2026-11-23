@@ -275,7 +275,7 @@ pub async fn can_view_file(state: &Shared, auth: &AuthUser, f: &FileRow) -> ApiR
     .bind(&f.id)
     .fetch_optional(&state.db)
     .await?;
-    if public.is_some() || crate::api::news::can_view_image(state, &auth.id, &f.id).await {
+    if public.is_some() || crate::api::news::can_view_image(state, &auth.id, &f.id).await || crate::api::watch::library_file_ok(state, &f.id).await {
         return Ok(true);
     }
     let channels: Vec<String> = sqlx::query_scalar(

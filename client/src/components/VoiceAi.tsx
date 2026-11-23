@@ -190,7 +190,7 @@ export function GuildVoiceListen({ guildId, botEnabled, value, onChange }: { gui
   return (
     <div className="perm-row">
       <div>
-        <div className="bold">Listen in voice channels ("Hey Llamble")</div>
+        <div className="bold">Listen in voice rooms ("Hey Llamble")</div>
         <div className="muted small">
           {!available
             ? me?.instance_role === "master"

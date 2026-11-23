@@ -6,6 +6,7 @@ import { sendGateway } from "../gateway";
 import { refreshVoicemailCount, useVoicemailCount, VoicemailInbox } from "./VoiceMessage";
 import { useCalls } from "../calls";
 import { useUnreadNotices } from "../notifications";
+import { PeopleMute } from "./Watch";
 import { can, channelSort, currentChannelId, homeOf, isMessages, isUnread, memberName, notesForMe, openGuildView, openHome, openLibrary, openMessages, openMyProfile, selectChannel, useStore, type MsgTab } from "../store";
 import { P, type Channel } from "../types";
 import { copy, openMenu, openModal, toggleCollapsed, toast, useUI } from "../ui";
@@ -37,7 +38,7 @@ function GuildHeader({ guildId }: { guildId: string }) {
     { label: "Server Settings", onClick: () => openModal({ kind: "serverSettings", guildId }), disabled: !can(guildId, P.MANAGE_GUILD) && !can(guildId, P.MANAGE_ROLES) && !can(guildId, P.BAN) },
     { label: "AI Bot", onClick: () => openModal({ kind: "serverSettings", guildId, tab: "bot" }), disabled: !can(guildId, P.MANAGE_GUILD) },
     { separator: true, label: "" },
-    { label: "Create Channel", onClick: () => openModal({ kind: "createChannel", guildId }), disabled: !can(guildId, P.MANAGE_CHANNELS) },
+    { label: "Add a Space", onClick: () => openModal({ kind: "createChannel", guildId }), disabled: !can(guildId, P.MANAGE_CHANNELS) },
     { label: "Create Category", onClick: () => openModal({ kind: "createChannel", guildId, channelKind: "category" }), disabled: !can(guildId, P.MANAGE_CHANNELS) },
     { label: "Mark As Read", onClick: () => markGuildRead(guildId) },
     { separator: true, label: "" },
@@ -92,7 +93,7 @@ function ChannelList({ guildId }: { guildId: string }) {
                 onContextMenu={(e) =>
                   manage &&
                   openMenu(e, [
-                    { label: "Create Channel", onClick: () => openModal({ kind: "createChannel", guildId, parentId: cat.id }) },
+                    { label: "Add a Space", onClick: () => openModal({ kind: "createChannel", guildId, parentId: cat.id }) },
                     { label: "Edit Category", onClick: () => openModal({ kind: "editChannel", channelId: cat.id }) },
                   ])
                 }
@@ -102,7 +103,7 @@ function ChannelList({ guildId }: { guildId: string }) {
                 {manage && (
                   <button
                     className="icon-btn tiny"
-                    title="Create Channel"
+                    title="Add a Space"
                     onClick={(e) => {
                       e.stopPropagation();
                       openModal({ kind: "createChannel", guildId, parentId: cat.id });
@@ -160,7 +161,7 @@ function ChannelRow({ ch }: { ch: Channel }) {
   const mentions = useStore((s) => s.mentions[ch.id] || 0);
   const manage = can(ch.guild_id, P.MANAGE_CHANNELS);
   const voiceStates = useStore((s) => s.voiceStates);
-  const voiceUsers = ch.kind === "voice" ? Object.values(voiceStates).filter((v) => v.channel_id === ch.id) : [];
+  const voiceUsers = ch.kind === "voice" || ch.kind === "watch" ? Object.values(voiceStates).filter((v) => v.channel_id === ch.id) : [];
   const inThis = useVoice((v) => v.channelId === ch.id);
   const speaking = useVoice((v) => v.speaking);
   const users = useStore((s) => s.users);
@@ -172,37 +173,38 @@ function ChannelRow({ ch }: { ch: Channel }) {
   const menu = (e: React.MouseEvent) =>
     openMenu(e, [
       { label: "Mark As Read", onClick: () => ch.last_message_id && api(`/api/channels/${ch.id}/ack`, { body: { message_id: ch.last_message_id } }), disabled: ch.kind !== "text" },
-      { label: "Edit Channel", onClick: () => openModal({ kind: "editChannel", channelId: ch.id }), disabled: !manage },
+      { label: "Edit Space", onClick: () => openModal({ kind: "editChannel", channelId: ch.id }), disabled: !manage },
       {
-        label: "Delete Channel",
+        label: "Delete Space",
         danger: true,
         disabled: !manage,
         onClick: () =>
           openModal({
             kind: "confirm",
-            title: "Delete Channel",
+            title: "Delete Space",
             body: `Are you sure you want to delete ${ch.kind === "text" ? "#" : ""}${ch.name}? This can't be undone.`,
             danger: true,
-            confirmLabel: "Delete Channel",
+            confirmLabel: "Delete Space",
             onConfirm: () => api(`/api/channels/${ch.id}`, { method: "DELETE" }),
           }),
       },
       { separator: true, label: "" },
-      { label: "Copy Channel ID", onClick: () => copy(ch.id, "ID copied") },
+      { label: "Copy Space ID", onClick: () => copy(ch.id, "ID copied") },
     ]);
 
   return (
     <>
       <div className={"channel" + (active ? " active" : "") + (unread ? " unread" : "")} onClick={onClick} onContextMenu={menu}>
         {unread && !active && <span className="unread-pip" />}
-        <Icon name={ch.kind === "voice" ? "speaker" : "hash"} size={18} className="channel-icon" />
+        {ch.kind === "watch" ? <span className="channel-icon channel-emoji-icon">🍿</span> : <Icon name={ch.kind === "voice" ? "speaker" : "hash"} size={18} className="channel-icon" />}
         <span className="ellipsis">{ch.name}</span>
+        {ch.locked && <span title="Locked: nobody new can come in">🔒</span>}
         {ch.kind === "voice" && <RecBadge channelId={ch.id} />}
         {mentions > 0 && <span className="badge inline">{mentions}</span>}
         {manage && (
           <button
             className="icon-btn tiny hover-only"
-            title="Edit Channel"
+            title="Edit Space"
             onClick={(e) => {
               e.stopPropagation();
               openModal({ kind: "editChannel", channelId: ch.id });
@@ -299,7 +301,7 @@ export function userMenu(e: React.MouseEvent, userId: string, guildId: string | 
         openModal({
           kind: "confirm",
           title: `Delete everything ${user?.display_name} wrote here?`,
-          body: "Removes all their messages in every channel of this server. This can't be undone.",
+          body: "Removes all their messages in every space of this server. This can't be undone.",
           danger: true,
           confirmLabel: "Delete all",
           onConfirm: () => api(`/api/guilds/${guildId}/members/${userId}/messages`, { method: "DELETE" }).then((r) => toast(`Deleted ${r.deleted} messages`)),
@@ -532,6 +534,11 @@ function VoicePanel() {
       </div>
       {v.error && <div className="voice-error small">{v.error}</div>}
       <ListeningLine channelId={v.channelId} />
+      {channel?.kind === "watch" ? (
+        <div className="voice-panel-btns">
+          <PeopleMute />
+        </div>
+      ) : (
       <div className="voice-panel-btns">
         <button className={"vbtn" + (v.camera ? " on" : "")} disabled={!v.canVideo} onClick={toggleCamera} title="Camera">
           <Icon name={v.camera ? "video" : "videoOff"} size={18} /> Video
@@ -544,7 +551,9 @@ function VoicePanel() {
         >
           <Icon name="screen" size={18} /> {v.screen ? "Stop" : "Screen"}
         </button>
+        <PeopleMute small />
       </div>
+      )}
     </div>
   );
 }

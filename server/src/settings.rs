@@ -43,6 +43,19 @@ pub struct ServerSettings {
     /// up, except to their own parents.
     #[serde(default = "default_invite_search")]
     pub invite_search: String,
+    /// the Watch Party module: servers can add Watch Party spaces
+    #[serde(default = "yes")]
+    pub watch_party: bool,
+    /// the instance's movie library (instance staff add movies; for self-hosted instances)
+    #[serde(default = "yes")]
+    pub watch_library: bool,
+    /// members can stream a video file from their own device into a Watch Party
+    #[serde(default = "yes")]
+    pub watch_device_stream: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 fn default_invite_search() -> String {
@@ -74,6 +87,9 @@ impl ServerSettings {
             require_https: false,
             people_name: default_people_name(),
             invite_search: default_invite_search(),
+            watch_party: true,
+            watch_library: true,
+            watch_device_stream: true,
         }
     }
     pub fn max_upload_bytes(&self) -> u64 {
@@ -229,6 +245,7 @@ pub async fn put_settings(State(state): State<Shared>, auth: AuthUser, Json(req)
             "max_upload_bytes": s.max_upload_bytes(),
             "guild_create": s.guild_create,
             "people_name": s.people_name,
+            "watch": { "on": s.watch_party, "library": s.watch_library, "device": s.watch_device_stream },
             "media": { "max_share": s.max_share, "max_camera": s.max_camera, "mic_default_kbps": s.mic_default_kbps, "mic_max_kbps": s.mic_max_kbps, "server_recording": s.allow_server_recording },
         }),
     );
