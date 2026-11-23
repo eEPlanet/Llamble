@@ -68,7 +68,7 @@ pub struct CreateMsg {
     pub nonce: Option<String>,
     /// a screen effect to play for everyone watching (confetti, fireworks...)
     pub effect: Option<String>,
-    /// a voice message: its one attachment is the recording (16 kHz WAV)
+    /// a voice message: its one attachment is the recording (Opus at the sender's mic quality, or 16 kHz WAV)
     pub voice: Option<VoiceIn>,
     /// set by share_message only (never from a client): the message being shared, whose
     /// attachments may be re-posted by someone who can see it
@@ -315,9 +315,9 @@ pub async fn remove_message(state: &Shared, mid: &str) {
     state.emit_channel(&ch, "MESSAGE_DELETE", &json!({ "id": mid, "channel_id": ch.id })).await;
 }
 
-/// The embeds an edit or a link preview must keep: a published show's player.
+/// The embeds an edit or a link preview must keep: a published show's player, an invite card.
 pub fn kept_embeds(embeds: &str) -> Vec<Value> {
-    serde_json::from_str::<Vec<Value>>(embeds).unwrap_or_default().into_iter().filter(|e| e["type"] == "show").collect()
+    serde_json::from_str::<Vec<Value>>(embeds).unwrap_or_default().into_iter().filter(|e| e["type"] == "show" || e["type"] == "invite").collect()
 }
 
 pub async fn add_reaction(State(state): State<Shared>, auth: AuthUser, Path((mid, emoji)): Path<(String, String)>) -> ApiResult<Json<Value>> {

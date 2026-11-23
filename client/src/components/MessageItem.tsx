@@ -10,6 +10,7 @@ import { Avatar, BotTag, Icon, formatTime } from "./common";
 import { EmojiPicker } from "./Pickers";
 import { addHighlight } from "../notes";
 import { Player } from "./Show";
+import { InviteCard } from "./Notifications";
 
 export const MessageItem = memo(function MessageItem({ msg, guildId, compact, readOnly }: { msg: Message; guildId: string | null; compact: boolean; readOnly?: boolean }) {
   const me = useStore((s) => s.me)!;
@@ -356,6 +357,7 @@ function ShowEmbed({ e }: { e: Embed }) {
 function EmbedView({ e }: { e: Embed }) {
   const [playing, setPlaying] = useState(false);
   if (e.type === "show") return <ShowEmbed e={e} />;
+  if (e.type === "invite" && e.card_id) return <InviteCard cardId={e.card_id} guild={e.guild} />;
   if (e.type === "image" && e.image) {
     return (
       <img

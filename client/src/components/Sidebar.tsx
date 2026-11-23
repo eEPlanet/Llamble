@@ -5,6 +5,7 @@ import { api } from "../api";
 import { sendGateway } from "../gateway";
 import { refreshVoicemailCount, useVoicemailCount, VoicemailInbox } from "./VoiceMessage";
 import { useCalls } from "../calls";
+import { useUnreadNotices } from "../notifications";
 import { can, channelSort, currentChannelId, homeOf, isMessages, isUnread, memberName, notesForMe, openGuildView, openHome, openLibrary, openMessages, openMyProfile, selectChannel, useStore, type MsgTab } from "../store";
 import { P, type Channel } from "../types";
 import { copy, openMenu, openModal, toggleCollapsed, toast, useUI } from "../ui";
@@ -330,6 +331,7 @@ function HomeSidebar() {
   const page = useStore((s) => s.homePage);
   const filter = useStore((s) => (s.homePage === "board" ? s.boardFilter["@home"] ?? "all" : null));
   const unread = useStore((s) => notesForMe(s).filter((n) => !n.read).length);
+  const notices = useUnreadNotices();
   const soon = (emoji: string, label: string, what: string) => (
     <div className="channel soon" title={what + " (coming soon)"}>
       <span className="channel-emoji">{emoji}</span>
@@ -356,6 +358,10 @@ function HomeSidebar() {
           <div className={"channel sub" + (filter === "news" ? " active" : "")} onClick={() => openHome("news")}>
             <span className="ellipsis">News</span>
           </div>
+          <div className={"channel sub" + (filter === "notifications" ? " active" : "") + (notices ? " unread" : "")} onClick={() => openHome("notifications")} title="Invites, friend requests and other things for you">
+            <span className="ellipsis">Notifications</span>
+            {notices > 0 && <span className="badge inline">{notices}</span>}
+          </div>
           <div className="channel sub soon" title="Game nights and shows, with RSVPs and reminders (coming soon)">
             <span className="ellipsis">Events</span>
             <span className="soon-tag">soon</span>
@@ -373,6 +379,8 @@ function HomeSidebar() {
         {soon("🎮", "Games", "Your games, who's playing, start one with friends")}
         {soon("🧩", "Apps", "Soundboard packs, GIF packs, board themes, bots")}
         {soon("🛍️", "Store", "The Llamble store")}
+        <div className="sidebar-sep" />
+        {soon("🛟", "Help Desk", "Report a problem or ask for help")}
       </div>
     </>
   );
@@ -541,20 +549,32 @@ function VoicePanel() {
   );
 }
 
+const STATUS_LABEL = { online: "🟢 Online", idle: "🌙 Idle", dnd: "⛔ Do Not Disturb", invisible: "⚪ Invisible" } as const;
+
 function UserPanel() {
   const me = useStore((s) => s.me);
+  const my = useStore((s) => s.myStatus);
   const v = useVoice();
+  const setMine = (next: Partial<typeof my>) => {
+    const m = { ...useStore.getState().myStatus, ...next };
+    localStorage.setItem("llamble.status", m.status);
+    sendGateway("presence", next);
+    useStore.setState((s) => ({ myStatus: m, presences: { ...s.presences, [me!.id]: m.status === "invisible" ? "offline" : m.status } }));
+  };
   const statusMenu = (e: React.MouseEvent) =>
     openMenu(
       e,
-      (["online", "idle", "dnd", "invisible"] as const).map((st) => ({
-        label: { online: "🟢 Online", idle: "🌙 Idle", dnd: "⛔ Do Not Disturb", invisible: "⚪ Invisible" }[st],
-        onClick: () => {
-          localStorage.setItem("llamble.status", st);
-          sendGateway("presence", { status: st });
-          useStore.setState((s) => ({ presences: { ...s.presences, [me!.id]: st === "invisible" ? "offline" : st } }));
-        },
-      })).concat([{ separator: true, label: "" } as any, { label: "Log Out", onClick: logout, danger: true } as any]),
+      (["online", "idle", "dnd", "invisible"] as const)
+        .map((st) => ({
+          label: (my.status === st ? "✓ " : "") + STATUS_LABEL[st] + (st === "invisible" ? " (look offline)" : ""),
+          onClick: () => setMine({ status: st }),
+        }))
+        .concat([
+          { separator: true, label: "" } as any,
+          { label: (my.hide_activity ? "✓ " : "") + "🙈 Hide what I'm doing", onClick: () => setMine({ hide_activity: !my.hide_activity }) },
+          { separator: true, label: "" } as any,
+          { label: "Log Out", onClick: logout, danger: true } as any,
+        ]),
     );
   if (!me) return null;
   return (
@@ -563,7 +583,10 @@ function UserPanel() {
         <Avatar user={me} size={32} status />
         <div className="user-panel-names">
           <div className="ellipsis bold">{me.display_name}</div>
-          <div className="ellipsis muted small">@{me.username}</div>
+          <div className="ellipsis muted small" title="Tap to change your status">
+            {STATUS_LABEL[my.status]}
+            {my.hide_activity ? " · hidden" : ""} ▾
+          </div>
         </div>
       </div>
       <button className={"icon-btn" + (v.muted ? " red" : "")} title={v.muted ? "Unmute (Ctrl+Shift+M)" : "Mute (Ctrl+Shift+M)"} onClick={toggleMute}>

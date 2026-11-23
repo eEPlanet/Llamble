@@ -106,7 +106,7 @@ export function VoiceRecorder({ channelId, canUrgent, onDone }: { channelId: str
     const out = await r.stop();
     onDone();
     if (!out) return toast("Too short to send");
-    sendVoice(channelId, out.wav, out.ms, urgentRef.current);
+    sendVoice(channelId, out.audio, out.ms, urgentRef.current);
   };
   useEffect(() => {
     let alive = true;
@@ -233,7 +233,7 @@ export function VoicemailRecorder({ targets, about, canUrgent, onDone }: { targe
   const [take, setTake] = useState(0);
   const rec = useRef<Recording | null>(null);
   const [ms, setMs] = useState(0);
-  const [result, setResult] = useState<{ wav: Blob; ms: number } | null>(null);
+  const [result, setResult] = useState<{ audio: Blob; ms: number } | null>(null);
   const [urgent, setUrgent] = useState(false);
   const [url, setUrl] = useState<string | null>(null);
   const names = targets.map((t) => t.name);
@@ -282,14 +282,14 @@ export function VoicemailRecorder({ targets, about, canUrgent, onDone }: { targe
   }, [take]);
   useEffect(() => {
     if (!result) return;
-    const u = URL.createObjectURL(result.wav);
+    const u = URL.createObjectURL(result.audio);
     setUrl(u);
     return () => URL.revokeObjectURL(u);
   }, [result]);
   const send = async () => {
     if (!result) return;
     onDone();
-    for (const t of targets) await sendVoice(t.channelId, result.wav, result.ms, urgent, { voicemail: true, about });
+    for (const t of targets) await sendVoice(t.channelId, result.audio, result.ms, urgent, { voicemail: true, about });
     toast(targets.length === 1 ? `Voicemail sent to ${targets[0].name}` : "Voicemail sent");
   };
   return (

@@ -51,7 +51,7 @@ async fn ready_payload(state: &Shared, auth: &AuthUser) -> anyhow::Result<Value>
     let presences: Vec<Value> = related
         .iter()
         .filter(|u| state.hub.is_online(u) && status_of(state, u) != "invisible")
-        .map(|u| json!({ "user_id": u, "status": status_of(state, u), "game": game_of(u) }))
+        .map(|u| json!({ "user_id": u, "status": status_of(state, u), "game": game_of(u), "hidden": hidden(u) }))
         .collect();
     let voice: Vec<Value> = state
         .hub
@@ -70,6 +70,7 @@ async fn ready_payload(state: &Shared, auth: &AuthUser) -> anyhow::Result<Value>
         "friends": crate::api::social::list_friends(axum::extract::State(state.clone()), auth.clone()).await.map(|j| j.0).unwrap_or(json!([])),
         "read_states": reads.into_iter().map(|(c, m)| json!({ "channel_id": c, "last_read_id": m })).collect::<Vec<_>>(),
         "presences": presences,
+        "my_status": { "status": status_of(state, &auth.id), "hide_activity": hidden(&auth.id) },
         "voice_states": voice,
         "shows": crate::shows::active(state).await,
         "config": {
@@ -124,6 +125,32 @@ fn status_of(_state: &Shared, uid: &str) -> String {
     STATUSES.get(uid).map(|s| s.clone()).unwrap_or_else(|| "online".into())
 }
 
+/// People who've turned on "Hide what I'm doing".
+pub static HIDDEN: once_cell::sync::Lazy<dashmap::DashSet<String>> = once_cell::sync::Lazy::new(Default::default);
+
+fn hidden(uid: &str) -> bool {
+    HIDDEN.contains(uid)
+}
+
+/// What others see as someone's status (invisible shows as offline).
+fn shown_status(state: &Shared, uid: &str) -> String {
+    let s = status_of(state, uid);
+    if s == "invisible" { "offline".into() } else { s }
+}
+
+/// The status and "hide what I'm doing" saved on the account, loaded the first time it's needed.
+async fn load_status(state: &Shared, uid: &str) {
+    if STATUSES.contains_key(uid) {
+        return;
+    }
+    let r: Option<(String, bool)> = sqlx::query_as("SELECT status, hide_activity FROM users WHERE id = ?").bind(uid).fetch_optional(&state.db).await.ok().flatten();
+    let (st, hide) = r.unwrap_or_else(|| ("online".into(), false));
+    STATUSES.insert(uid.to_string(), st);
+    if hide {
+        HIDDEN.insert(uid.to_string());
+    }
+}
+
 async fn session(state: Shared, auth: AuthUser, sock: WebSocket) {
     let (mut sink, mut stream) = sock.split();
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
@@ -133,10 +160,12 @@ async fn session(state: Shared, auth: AuthUser, sock: WebSocket) {
     // delivered right after it. Registering afterwards lost those events, which is why
     // people could be missing from lists after everyone reconnected at once (restarts).
     let worker_tx = tx.clone();
+    load_status(&state, &auth.id).await;
     let (conn_id, first) = state.hub.register(&auth.id, tx);
     if first {
-        let status = status_of(&state, &auth.id);
-        state.emit_related(&auth.id, "PRESENCE_UPDATE", &json!({ "user_id": auth.id, "status": status })).await;
+        // (an invisible person coming online stays "offline" to everyone)
+        let status = shown_status(&state, &auth.id);
+        state.emit_related(&auth.id, "PRESENCE_UPDATE", &json!({ "user_id": auth.id, "status": status, "hidden": hidden(&auth.id) })).await;
     }
     let ready = match ready_payload(&state, &auth).await {
         Ok(r) => r,
@@ -182,14 +211,27 @@ async fn session(state: Shared, auth: AuthUser, sock: WebSocket) {
                         match v["op"].as_str() {
                             Some("ping") => { let _ = sink.send(WsMsg::Text(json!({"t":"PONG"}).to_string().into())).await; }
                             Some("presence") => {
-                                let st = v["status"].as_str().unwrap_or("online");
-                                if ["online", "idle", "dnd", "invisible"].contains(&st) {
+                                // status (saved on the account, so every device agrees) and/or
+                                // "hide what I'm doing"
+                                let mut changed = false;
+                                if let Some(st) = v["status"].as_str().filter(|s| ["online", "idle", "dnd", "invisible"].contains(s)) {
                                     STATUSES.insert(auth.id.clone(), st.to_string());
-                                    let shown = if st == "invisible" { "offline" } else { st };
-                                    if st == "invisible" {
+                                    let _ = sqlx::query("UPDATE users SET status = ? WHERE id = ?").bind(st).bind(&auth.id).execute(&state.db).await;
+                                    changed = true;
+                                }
+                                if let Some(h) = v["hide_activity"].as_bool() {
+                                    if h { HIDDEN.insert(auth.id.clone()); } else { HIDDEN.remove(&auth.id); }
+                                    let _ = sqlx::query("UPDATE users SET hide_activity = ? WHERE id = ?").bind(h).bind(&auth.id).execute(&state.db).await;
+                                    changed = true;
+                                }
+                                if changed {
+                                    if status_of(&state, &auth.id) == "invisible" || hidden(&auth.id) {
                                         set_game(&state, &auth.id, None).await;
                                     }
-                                    state.emit_related(&auth.id, "PRESENCE_UPDATE", &json!({ "user_id": auth.id, "status": shown })).await;
+                                    let shown = shown_status(&state, &auth.id);
+                                    state.emit_related(&auth.id, "PRESENCE_UPDATE", &json!({ "user_id": auth.id, "status": shown, "hidden": hidden(&auth.id) })).await;
+                                    // the person's other devices pick up the change too
+                                    state.hub.send_user(&auth.id, "MY_STATUS", &json!({ "status": status_of(&state, &auth.id), "hide_activity": hidden(&auth.id) }));
                                 }
                             }
                             Some("activity") => {
@@ -198,7 +240,7 @@ async fn session(state: Shared, auth: AuthUser, sock: WebSocket) {
                                     .map(|g| g.trim().chars().filter(|c| !c.is_control()).take(80).collect::<String>())
                                     .filter(|g| !g.is_empty());
                                 // invisible people don't announce what they're playing either
-                                let game = if status_of(&state, &auth.id) == "invisible" { None } else { game };
+                                let game = if status_of(&state, &auth.id) == "invisible" || hidden(&auth.id) { None } else { game };
                                 set_game(&state, &auth.id, game).await;
                             }
                             Some("worker_register") => {

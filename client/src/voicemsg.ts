@@ -8,52 +8,122 @@ import { toast } from "./ui";
 export const MAX_MS = 5 * 60_000;
 
 export interface Recording {
-  stop: () => Promise<{ wav: Blob; ms: number } | null>;
+  stop: () => Promise<{ audio: Blob; ms: number } | null>;
   cancel: () => void;
   level: () => number;
   ms: () => number;
 }
 
+/** The mic you picked in Settings, with the noise/echo/volume options from your Mic sound. */
+async function openMic(): Promise<MediaStream> {
+  const { micSound, prefs } = await import("./voice");
+  const m = micSound();
+  const dev = prefs.get("audioInput");
+  const want = (deviceId?: string) =>
+    navigator.mediaDevices.getUserMedia({
+      audio: { deviceId: deviceId ? { exact: deviceId } : undefined, echoCancellation: m.echoCancellation, noiseSuppression: m.noise !== "off", autoGainControl: m.autoGainControl, channelCount: 1 },
+    });
+  try {
+    return await want(dev || undefined);
+  } catch (e) {
+    if (dev) return want(); // the picked mic is gone: use the default one
+    throw e;
+  }
+}
+
+/** Opus at your Mic sound quality, capped by the server's maximum (and at least voice quality). */
+async function voiceBitrate(): Promise<number> {
+  const { micSound, micLimits } = await import("./voice");
+  return Math.max(24_000, Math.min(micSound().bitrate, micLimits().max));
+}
+
+function recorderType(): string | null {
+  if (typeof MediaRecorder === "undefined") return null;
+  for (const t of ["audio/webm;codecs=opus", "audio/ogg;codecs=opus", "audio/mp4;codecs=opus", "audio/webm"]) if (MediaRecorder.isTypeSupported(t)) return t;
+  return null;
+}
+
 export async function startRecording(onLimit: () => void): Promise<Recording> {
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
+  const stream = await openMic();
   const ctx = new AudioContext();
   const src = ctx.createMediaStreamSource(stream);
+  // level meter
+  const an = ctx.createAnalyser();
+  an.fftSize = 1024;
+  src.connect(an);
+  const buf = new Float32Array(an.fftSize);
+  const level = () => {
+    an.getFloatTimeDomainData(buf);
+    let m = 0;
+    for (let i = 0; i < buf.length; i += 8) m = Math.max(m, Math.abs(buf[i]));
+    return m;
+  };
+  const started = performance.now();
+  const limit = window.setInterval(() => performance.now() - started > MAX_MS && onLimit(), 500);
+  const close = () => {
+    clearInterval(limit);
+    try {
+      src.disconnect();
+    } catch {}
+    stream.getTracks().forEach((t) => t.stop());
+    ctx.close().catch(() => {});
+  };
+  const type = recorderType();
+  if (type) {
+    // full quality (Opus); the server makes the 16 kHz copy its speech recognition reads
+    const rec = new MediaRecorder(stream, { mimeType: type, audioBitsPerSecond: await voiceBitrate() });
+    const parts: Blob[] = [];
+    rec.ondataavailable = (e) => e.data.size && parts.push(e.data);
+    rec.start(1000);
+    return {
+      level,
+      ms: () => performance.now() - started,
+      cancel: () => {
+        rec.onstop = null;
+        try {
+          rec.stop();
+        } catch {}
+        close();
+      },
+      stop: () =>
+        new Promise((done) => {
+          const ms = Math.round(performance.now() - started);
+          rec.onstop = () => {
+            close();
+            done(ms < 600 ? null : { audio: new Blob(parts, { type: type.split(";")[0] }), ms });
+          };
+          rec.stop();
+        }),
+    };
+  }
+  // no recorder here: 16 kHz WAV the old way
   const proc = ctx.createScriptProcessor(4096, 1, 1);
   const chunks: Float32Array[] = [];
-  let peak = 0;
-  const started = performance.now();
   let done = false;
   proc.onaudioprocess = (e) => {
-    if (done) return;
-    const d = new Float32Array(e.inputBuffer.getChannelData(0));
-    chunks.push(d);
-    let m = 0;
-    for (let i = 0; i < d.length; i += 64) m = Math.max(m, Math.abs(d[i]));
-    peak = m;
-    if (performance.now() - started > MAX_MS) onLimit();
+    if (!done) chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
   };
   src.connect(proc);
   // a ScriptProcessor only runs while connected to the output; it outputs silence
   const mute = ctx.createGain();
   mute.gain.value = 0;
   proc.connect(mute).connect(ctx.destination);
-  const close = () => {
-    done = true;
-    proc.disconnect();
-    src.disconnect();
-    stream.getTracks().forEach((t) => t.stop());
-    ctx.close().catch(() => {});
-  };
   return {
-    level: () => peak,
+    level,
     ms: () => performance.now() - started,
-    cancel: close,
+    cancel: () => {
+      done = true;
+      proc.disconnect();
+      close();
+    },
     stop: async () => {
       const ms = Math.round(performance.now() - started);
       const rate = ctx.sampleRate;
+      done = true;
+      proc.disconnect();
       close();
       if (ms < 600) return null;
-      return { wav: toWav16k(chunks, rate), ms };
+      return { audio: toWav16k(chunks, rate), ms };
     },
   };
 }
@@ -97,9 +167,11 @@ function toWav16k(chunks: Float32Array[], rate: number): Blob {
   return new Blob([buf], { type: "audio/wav" });
 }
 
-export async function sendVoice(channelId: string, wav: Blob, ms: number, urgent: boolean, extra?: { voicemail?: boolean; about?: string }) {
+const EXT: Record<string, string> = { "audio/wav": "wav", "audio/webm": "webm", "audio/ogg": "ogg", "audio/mp4": "m4a" };
+
+export async function sendVoice(channelId: string, audio: Blob, ms: number, urgent: boolean, extra?: { voicemail?: boolean; about?: string }) {
   try {
-    const f = await upload(wav, `${extra?.voicemail ? "Voicemail" : "Voice message"} ${new Date().toLocaleString()}.wav`);
+    const f = await upload(audio, `${extra?.voicemail ? "Voicemail" : "Voice message"} ${new Date().toLocaleString()}.${EXT[audio.type] || "webm"}`);
     await api(`/api/channels/${channelId}/messages`, { body: { content: "", attachments: [{ id: f.id }], voice: { duration_ms: ms, urgent, ...extra } } });
   } catch (e: any) {
     toast(e.message || "Couldn't send the voice message", "error");

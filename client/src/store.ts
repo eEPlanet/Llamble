@@ -36,6 +36,10 @@ interface State {
   presences: Record<string, string>;
   /** what each person is playing ("Playing X"), from the Windows app's game detection */
   games: Record<string, string>;
+  /** people who turned on "Hide what I'm doing" (still online, but not in Right now) */
+  activityHidden: Record<string, boolean>;
+  /** my own status and "hide what I'm doing", saved on my account */
+  myStatus: { status: "online" | "idle" | "dnd" | "invisible"; hide_activity: boolean };
   voiceStates: Record<string, VoiceState>;
   typing: Record<string, Record<string, number>>;
   /** guild id, "@me" (direct messages), "@friends", "@parties" or "@home" */
@@ -83,6 +87,8 @@ export const useStore = create<State>(() => ({
   friends: {},
   presences: {},
   games: {},
+  activityHidden: {},
+  myStatus: { status: "online", hide_activity: false },
   voiceStates: {},
   typing: {},
   // everyone opens the app on Home (notes for you, who's around, highlights)
@@ -119,7 +125,7 @@ export function selectChannel(guildId: string, channelId: string | null) {
   set({ selectedGuild: guildId, lastChannel, guildView, ...(channelId ? { mobileMain: true } : {}) });
 }
 
-export type BoardFilter = "all" | "notes" | "highlights" | "news";
+export type BoardFilter = "all" | "notes" | "highlights" | "news" | "notifications";
 
 export function openHome(filter: BoardFilter = "all") {
   localStorage.setItem("llamble.lastGuild", "@home");
@@ -339,15 +345,19 @@ export function handleEvent(t: string, d: any) {
       for (const r of d.read_states) readStates[r.channel_id] = r.last_read_id;
       const presences: Record<string, string> = {};
       const games: Record<string, string> = {};
+      const activityHidden: Record<string, boolean> = {};
       for (const p of d.presences) {
         presences[p.user_id] = p.status;
         if (p.game) games[p.user_id] = p.game;
+        if (p.hidden) activityHidden[p.user_id] = true;
       }
-      presences[d.user.id] = localStorage.getItem("llamble.status") || "online";
+      const myStatus = d.my_status || { status: "online", hide_activity: false };
+      presences[d.user.id] = myStatus.status === "invisible" ? "offline" : myStatus.status;
+      localStorage.setItem("llamble.status", myStatus.status);
       const voiceStates: Record<string, VoiceState> = {};
       for (const v of d.voice_states) voiceStates[v.user_id] = v;
       if (!st.selectedGuild.startsWith("@") && !st.guilds[st.selectedGuild]) st.selectedGuild = "@home";
-      set({ ...st, me: d.user, ready: true, readStates, presences, games, voiceStates, config: d.config, messages: {}, hasMore: {} });
+      set({ ...st, me: d.user, ready: true, readStates, presences, games, activityHidden, myStatus, voiceStates, config: d.config, messages: {}, hasMore: {} });
       break;
     }
     case "GUILD_CREATE": {
@@ -526,7 +536,13 @@ export function handleEvent(t: string, d: any) {
     case "PRESENCE_UPDATE": {
       const games = { ...s.games };
       if (d.status === "offline") delete games[d.user_id];
-      set({ presences: { ...s.presences, [d.user_id]: d.status }, games });
+      set({ presences: { ...s.presences, [d.user_id]: d.status }, games, activityHidden: { ...s.activityHidden, [d.user_id]: !!d.hidden } });
+      break;
+    }
+    case "MY_STATUS": {
+      // changed on this or another of my devices
+      localStorage.setItem("llamble.status", d.status);
+      set({ myStatus: d, presences: s.me ? { ...s.presences, [s.me.id]: d.status === "invisible" ? "offline" : d.status } : s.presences });
       break;
     }
     case "NOTE_CREATE":

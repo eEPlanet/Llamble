@@ -1697,6 +1697,16 @@ function ServerConfig() {
       )}
       <p className="muted small">The list of people everyone keeps in touch with. Friends suits gamers, Contacts suits a family or a business, and a school might call it Classmates.</p>
 
+      <div className="profile-section">Inviting people</div>
+      <label>
+        When inviting someone to a server, search finds
+        <select value={f.invite_search ?? "connections"} onChange={(e) => set("invite_search", e.target.value)}>
+          <option value="connections">Their friends and people who share a server with them</option>
+          <option value="everyone">Everyone on this Llamble</option>
+        </select>
+      </label>
+      <p className="muted small">Kid accounts never show up in search. Only a kid's parent can invite them, to a server the parent is in.</p>
+
       <div className="profile-section">AI bot</div>
       <label>
         Bot name

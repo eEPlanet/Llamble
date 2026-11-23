@@ -1079,7 +1079,9 @@ body.pop-body > .pop { height: 100vh; }
 .hb-title-sub { font-weight: 600; opacity: 0.75; }
 
 /* Board sub-entries in the left column */
-.channel.sub { padding-left: 34px; font-size: 14px; }
+.channel.sub { padding-left: 50px; font-size: 14px; position: relative; }
+/* a thin guide line: Notes, Highlights, News… are parts of the Board above them */
+.channel.sub::before { content: ""; position: absolute; left: 30px; top: 4px; bottom: 4px; width: 2px; border-radius: 2px; background: var(--border, rgba(127, 127, 127, 0.3)); }
 .channel.soon { opacity: 0.55; cursor: default; }
 .channel.soon:hover { background: none; }
 .soon-tag { margin-left: auto; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; padding: 1px 6px; border-radius: 6px; background: var(--bg-3, rgba(127, 127, 127, 0.25)); }
@@ -1506,3 +1508,54 @@ body.pop-body > .pop { height: 100vh; }
 .vm-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
 .vnote-save { border: 0; background: none; cursor: pointer; }
 .danger-box { border: 1px solid #d83c3e; border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 10px; max-width: 520px; }
+
+/* ---- Notifications desk, invite cards ---- */
+.guild-logo.lit { box-shadow: 0 0 0 3px var(--accent, #4f8cff), 0 0 14px 2px color-mix(in srgb, var(--accent, #4f8cff) 70%, transparent); animation: llama-lit 2.4s ease-in-out infinite; }
+@keyframes llama-lit { 50% { box-shadow: 0 0 0 3px var(--accent, #4f8cff), 0 0 22px 6px color-mix(in srgb, var(--accent, #4f8cff) 45%, transparent); } }
+@media (prefers-reduced-motion: reduce) { .guild-logo.lit { animation: none; } }
+.sidebar-section { margin: 12px 8px 4px; font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; opacity: 0.6; }
+.desk-page { max-width: 760px; margin: 0 auto; padding: 24px 20px 60px; width: 100%; overflow-y: auto; }
+.desk-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.desk-head h1 { margin: 0; font-size: 24px; }
+.desk-empty { padding: 40px 0; text-align: center; opacity: 0.6; }
+.notice-list { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.notice { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: 12px; background: var(--bg-2, rgba(127, 127, 127, 0.1)); border: 1px solid var(--border, rgba(127, 127, 127, 0.2)); }
+.notice.unread { border-color: var(--accent, #4f8cff); background: color-mix(in srgb, var(--accent, #4f8cff) 10%, var(--bg-2, transparent)); }
+.notice.compact { padding: 8px 10px; }
+.notice-main { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; background: none; border: 0; color: inherit; text-align: left; padding: 0; cursor: pointer; font: inherit; }
+.notice-main:disabled { cursor: default; }
+.notice-pic { flex: none; display: grid; place-items: center; width: 40px; font-size: 22px; }
+.notice.compact .notice-pic { width: 32px; }
+.notice-pic .guild-img, .notice-pic .guild-initials { width: 40px; height: 40px; border-radius: 12px; }
+.notice-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.notice-actions { display: flex; gap: 6px; align-items: center; flex: none; flex-wrap: wrap; justify-content: flex-end; }
+.hb-top.with-notices { grid-template-columns: minmax(0, 1fr) minmax(240px, 320px) auto; }
+@media (max-width: 1100px) { .hb-top.with-notices { grid-template-columns: minmax(0, 1fr) minmax(220px, 300px); } .hb-top.with-notices > :nth-child(3) { grid-column: 1 / -1; } }
+@media (max-width: 900px) { .hb-top.with-notices { grid-template-columns: 1fr; } }
+.hb-notices-head { display: flex; align-items: center; gap: 8px; }
+.hb-notices-head .hb-index-title { margin: 0; }
+.hb-notices-head .btn { margin-left: auto; }
+.hb-notices .notice-list { margin-top: 8px; gap: 6px; }
+.hb-notices .notice { padding: 6px 8px; }
+.hb-notices .notice-text { font-size: 13px; }
+.hb-live-dot { font-size: 10px; font-weight: 800; letter-spacing: 0.05em; color: #fff; background: var(--red, #e5484d); border-radius: 4px; padding: 1px 5px; }
+.desk-page.in-board { padding: 0; margin: 0; max-width: 760px; overflow: visible; }
+.invite-card { margin-top: 6px; max-width: 440px; border-radius: 14px; padding: 12px 14px; background: var(--bg-2, rgba(127, 127, 127, 0.12)); border: 1px solid var(--border, rgba(127, 127, 127, 0.25)); }
+.invite-card-top { display: flex; align-items: center; gap: 12px; }
+.invite-card-top .guild-img, .invite-card-top .guild-initials { width: 48px; height: 48px; border-radius: 14px; display: grid; place-items: center; background: var(--accent, #4f8cff); color: #fff; font-weight: 700; flex: none; }
+.invite-card-info { flex: 1; min-width: 0; }
+.invite-card-name { font-weight: 800; font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.invite-card-act { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+.invite-card-progress { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border, rgba(127, 127, 127, 0.2)); }
+.invite-card-people { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.invite-person { display: grid; grid-template-columns: 28px 1fr auto auto; align-items: center; gap: 8px; opacity: 0.75; }
+.invite-person.in { opacity: 1; }
+.invite-person.in .muted { color: var(--green, #3ba55d); opacity: 1; }
+.invite-card-status { margin-top: 6px; }
+.invite-search { display: flex; flex-direction: column; gap: 6px; }
+.invite-results { display: flex; flex-direction: column; gap: 4px; max-height: 240px; overflow-y: auto; }
+.invite-result { display: flex; align-items: center; gap: 10px; padding: 4px 2px; }
+.hb-notices .notice { background: rgba(0, 0, 0, 0.04); border-color: rgba(0, 0, 0, 0.08); color: inherit; }
+.hb-notices .notice.unread { border-color: var(--accent, #4f8cff); background: color-mix(in srgb, var(--accent, #4f8cff) 8%, transparent); }
+.hb-notices .notice .muted { color: inherit; opacity: 0.6; }
+.hb-plain .hb-notices .notice { background: var(--bg-2, rgba(127, 127, 127, 0.1)); border-color: var(--border, rgba(127, 127, 127, 0.2)); }

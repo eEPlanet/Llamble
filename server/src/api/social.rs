@@ -115,10 +115,15 @@ pub async fn add_friend(State(state): State<Shared>, auth: AuthUser, Json(req): 
             for (a, b) in [(&auth.id, &other), (&other, &auth.id)] {
                 sqlx::query("INSERT INTO friends (user_id, other_id, state, since) VALUES (?,?, 'friend', ?) ON CONFLICT(user_id, other_id) DO UPDATE SET state = 'friend', since = excluded.since").bind(a).bind(b).bind(now).execute(&state.db).await?;
             }
+            crate::api::notifications::clear_ref(&state, &auth.id, "friend_request", &other).await;
+            let by = crate::api::notifications::who(&state, &auth.id).await;
+            crate::api::notifications::notify_once(&state, &other, "friend_accepted", &auth.id, json!({ "by": by })).await;
         }
         _ => {
             sqlx::query("INSERT OR REPLACE INTO friends (user_id, other_id, state, since) VALUES (?,?, 'outgoing', ?)").bind(&auth.id).bind(&other).bind(now).execute(&state.db).await?;
             sqlx::query("INSERT OR REPLACE INTO friends (user_id, other_id, state, since) VALUES (?,?, 'incoming', ?)").bind(&other).bind(&auth.id).bind(now).execute(&state.db).await?;
+            let from = crate::api::notifications::who(&state, &auth.id).await;
+            crate::api::notifications::notify_once(&state, &other, "friend_request", &auth.id, json!({ "from": from })).await;
         }
     }
     tell_both(&state, &auth.id, &other).await;
@@ -182,6 +187,9 @@ pub async fn favorite_friend(State(state): State<Shared>, auth: AuthUser, Path(o
 /// Unfriend, decline a request, or cancel one you sent.
 pub async fn remove_friend(State(state): State<Shared>, auth: AuthUser, Path(other): Path<String>) -> ApiResult<Json<Value>> {
     sqlx::query("DELETE FROM friends WHERE (user_id = ? AND other_id = ?) OR (user_id = ? AND other_id = ?)").bind(&auth.id).bind(&other).bind(&other).bind(&auth.id).execute(&state.db).await?;
+    // a declined or withdrawn request leaves no notification behind
+    crate::api::notifications::clear_ref(&state, &auth.id, "friend_request", &other).await;
+    crate::api::notifications::clear_ref(&state, &other, "friend_request", &auth.id).await;
     tell_both(&state, &auth.id, &other).await;
     Ok(Json(json!({ "ok": true })))
 }
@@ -278,6 +286,10 @@ pub async fn create_party(State(state): State<Shared>, auth: AuthUser, Json(req)
     }
     let v = party_payload(&state, &id).await?;
     state.hub.send_users(&members, "CHANNEL_CREATE", &v);
+    let by = crate::api::notifications::who(&state, &auth.id).await;
+    for u in members.iter().filter(|u| **u != auth.id) {
+        crate::api::notifications::notify(&state, u, "party_added", Some(&id), json!({ "party": { "id": id, "name": name }, "by": by })).await;
+    }
     Ok(Json(v))
 }
 
@@ -322,6 +334,12 @@ pub async fn remove_from_party(State(state): State<Shared>, auth: AuthUser, Path
     }
     sqlx::query("DELETE FROM dm_members WHERE channel_id = ? AND user_id = ?").bind(&id).bind(&who).execute(&state.db).await?;
     state.hub.send_users(&[who.clone()], "CHANNEL_DELETE", &json!({ "id": id, "guild_id": null }));
+    crate::api::notifications::clear_ref(&state, &who, "party_added", &id).await;
+    if who != auth.id {
+        let pname: String = sqlx::query_scalar("SELECT COALESCE(name, '') FROM channels WHERE id = ?").bind(&id).fetch_one(&state.db).await.unwrap_or_default();
+        let by = crate::api::notifications::who(&state, &auth.id).await;
+        crate::api::notifications::notify(&state, &who, "party_removed", Some(&id), json!({ "party": { "id": id, "name": pname }, "by": by })).await;
+    }
     let left: Vec<String> = members.into_iter().filter(|m| *m != who).collect();
     // they can't get back in, so what they wrote leaves with them (they'd have no way to delete
     // it later); the others are told which messages went

@@ -165,7 +165,10 @@ export interface EmbedMedia {
 }
 
 export interface Embed {
-  type: "link" | "image" | "video" | "gifv" | "show";
+  type: "link" | "image" | "video" | "gifv" | "show" | "invite";
+  /** type "invite": a server invite card (its live state comes from /api/invite-cards/{card_id}) */
+  card_id?: string;
+  guild?: { id: string; name?: string; icon_file_id?: string | null };
   /** type "show": a published recording ("show" = a Show post, "video" = just the video) */
   style?: "show" | "video";
   show_id?: string;

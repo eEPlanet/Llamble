@@ -3,12 +3,14 @@ import { useShallow } from "zustand/react/shallow";
 import { api } from "../api";
 import { highlightType, loadBoard, loadGuildNews, loadHighlights, loadInstanceNews } from "../notes";
 import { notesForMe, selectChannel, useStore } from "../store";
+import { useShows } from "../show";
 import { openModal, toast } from "../ui";
 import { joinVoice, useVoice } from "../voice";
 import { Avatar, Icon } from "./common";
 import { HighlightCard } from "./Highlights";
 import { NoteCard, NoteComposer } from "./Notes";
 import { FeaturedLlambleNews, NewsSection } from "./News";
+import { NotificationsDesk, NotificationsSection } from "./Notifications";
 import { BoardCustomize, HIGHLIGHT_TYPES } from "./BoardCustomize";
 import type { HighlightType } from "../types";
 
@@ -132,11 +134,13 @@ export function Board({ scope }: { scope: Scope }) {
         {customizing && <BoardCustomize onClose={() => setCustomizing(false)} />}
 
         {show === "all" && (
-          <div className="hb-top">
+          <div className={"hb-top" + (home ? " with-notices" : "")}>
             <RightNow scope={scope} />
+            {home && <NotificationsSection />}
             {home && <ChatWithBot />}
           </div>
         )}
+        {home && show === "notifications" && <NotificationsDesk />}
 
         {home && show === "all" && <FeaturedLlambleNews />}
         {(show === "all" || show === "news") && (
@@ -326,7 +330,7 @@ function RightNow({ scope }: { scope: Scope }) {
       const ids = new Set<string>();
       for (const g of home ? s.guildOrder : [scope]) for (const uid of Object.keys(s.members[g] || {})) ids.add(uid);
       return [...ids]
-        .filter((u) => u !== me && s.presences[u] && s.presences[u] !== "offline" && !s.users[u]?.is_bot)
+        .filter((u) => u !== me && s.presences[u] && s.presences[u] !== "offline" && !s.users[u]?.is_bot && !s.activityHidden[u])
         .sort((a, b) => (s.users[a]?.display_name || "").localeCompare(s.users[b]?.display_name || ""));
     }),
   );
@@ -335,14 +339,22 @@ function RightNow({ scope }: { scope: Scope }) {
   const voiceStates = useStore((s) => s.voiceStates);
   const users = useStore((s) => s.users);
   const channels = useStore((s) => s.channels);
+  const hiddenPeople = useStore((s) => s.activityHidden);
   const calls = useMemo(() => {
     const by: Record<string, string[]> = {};
     for (const v of Object.values(voiceStates)) {
       const g = channels[v.channel_id]?.guild_id;
-      if (g && (home || g === scope)) (by[v.channel_id] ||= []).push(v.user_id);
+      // people hiding what they're doing aren't listed here (they still show inside the server)
+      if (g && (home || g === scope) && (!hiddenPeople[v.user_id] || v.user_id === me)) (by[v.channel_id] ||= []).push(v.user_id);
     }
     return Object.entries(by).map(([cid, inIt]) => ({ cid, users: inIt }));
-  }, [voiceStates, channels, home, scope]);
+  }, [voiceStates, channels, home, scope, hiddenPeople, me]);
+  // shows on the air right now (in servers I can see)
+  const showStatus = useShows((s) => s.status);
+  const liveShows = useMemo(
+    () => Object.entries(showStatus).filter(([cid, st]) => st === "recording" && channels[cid]?.guild_id && (home || channels[cid]?.guild_id === scope)).map(([cid]) => cid),
+    [showStatus, channels, home, scope],
+  );
   const guilds = useStore((s) => s.guilds);
   const games = useStore((s) => s.games);
   const inCall = useVoice((v) => v.channelId);
@@ -363,6 +375,19 @@ function RightNow({ scope }: { scope: Scope }) {
           ⏰ Next alarm: {fmtWhen(soon.next_at).startsWith("Today") ? fmtTime(soon.next_at) : fmtWhen(soon.next_at)} — {soon.label || "Alarm"}
         </button>
       )}
+      {liveShows.map((cid) => {
+        const ch = channels[cid];
+        return (
+          <div key={"show" + cid} className="hb-call hb-live-show">
+            <span className="hb-live-dot">LIVE</span>
+            <b className="ellipsis">{ch.name}</b>
+            {home && <span className="hb-muted ellipsis">{guilds[ch.guild_id!]?.name}</span>}
+            <button className="hb-join" onClick={() => selectChannel(ch.guild_id!, cid)}>
+              Watch
+            </button>
+          </div>
+        );
+      })}
       {calls.map(({ cid, users: inIt }) => {
         const ch = channels[cid];
         if (!ch) return null;
@@ -405,7 +430,7 @@ function RightNow({ scope }: { scope: Scope }) {
           </button>
         ))}
       </div>
-      {!online.length && !calls.length && <div className="hb-muted">Nobody else is online right now.</div>}
+      {!online.length && !calls.length && !liveShows.length && <div className="hb-muted">Nobody else is online right now.</div>}
     </section>
   );
 }

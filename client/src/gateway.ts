@@ -48,8 +48,6 @@ function open() {
         if (ws === sock && lastHeard < sent) restart();
       }, 10000);
     }, 30000);
-    const status = localStorage.getItem("llamble.status");
-    if (status && status !== "online") sendGateway("presence", { status });
     window.dispatchEvent(new Event("llamble:gateway-open"));
   };
   sock.onmessage = (e) => {

@@ -7,6 +7,7 @@ import { usePeopleName } from "../store";
 import { can, currentChannelId, homeOf, isMessages, isUnread, onEvent, openFriend, openGuildView, openHome, openMessages, selectChannel, showMobileNav, useStore } from "../store";
 import { useIsPhone } from "../phone";
 import { Board, useUnreadNotes } from "./Home";
+import { useUnreadNotices } from "../notifications";
 import { P } from "../types";
 import { copy, openMenu, openModal, toast, useUI } from "../ui";
 import { useVoice } from "../voice";
@@ -114,6 +115,7 @@ export function Shell() {
               <MyProfile />
             ) : homePage === "voicemail" ? (
               <VoicemailPage />
+
             ) : (
               <Board key="@home" scope="@home" />
             )
@@ -208,6 +210,8 @@ function GuildBar() {
 
   const canCreate = cfg.guild_create === "all" || me?.is_admin;
   const unreadNotes = useUnreadNotes();
+  const unreadNotices = useUnreadNotices();
+  const homeCount = unreadNotes + unreadNotices;
   const vmCount = useVoicemailCount((v) => v.n);
   useEffect(() => refreshVoicemailCount(), []);
   const inMessages = isMessages(selected);
@@ -218,9 +222,13 @@ function GuildBar() {
     <nav className="guildbar">
       <div className="guild-wrap">
         <span className={"guild-pill" + (selected === "@home" ? " active" : "")} />
-        <button className={"guild-logo" + (selected === "@home" ? " active" : "")} title="Home: notes for you, who's around, highlights" onClick={() => openHome()}>
+        <button
+          className={"guild-logo" + (selected === "@home" ? " active" : "") + (unreadNotices ? " lit" : "")}
+          title={unreadNotices ? `Home · ${unreadNotices} new notification${unreadNotices > 1 ? "s" : ""}` : "Home: notes for you, who's around, highlights"}
+          onClick={() => openHome()}
+        >
           <img src="./icon-192.png" alt="Llamble" draggable={false} />
-          {unreadNotes ? <span className="badge">{unreadNotes}</span> : null}
+          {homeCount ? <span className="badge">{homeCount}</span> : null}
         </button>
       </div>
       <div className="guild-sep" />
