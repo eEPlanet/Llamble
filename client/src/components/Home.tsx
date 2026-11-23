@@ -11,6 +11,7 @@ import { HighlightCard } from "./Highlights";
 import { NoteCard, NoteComposer } from "./Notes";
 import { FeaturedLlambleNews, NewsSection } from "./News";
 import { NotificationsDesk, NotificationsSection } from "./Notifications";
+import { useUnreadNotices } from "../notifications";
 import { BoardCustomize, HIGHLIGHT_TYPES } from "./BoardCustomize";
 import type { HighlightType } from "../types";
 
@@ -69,6 +70,7 @@ export function Board({ scope }: { scope: Scope }) {
   const scroller = useRef<HTMLDivElement>(null);
   // what the board shows: picked in the left column (Board / Notes / Highlights)
   const show = useStore((s) => s.boardFilter[scope] ?? "all");
+  const unreadNotices = useUnreadNotices();
   const [customizing, setCustomizing] = useState(false);
   const pick = (v: BoardStyle) => {
     setStyle(v);
@@ -134,7 +136,7 @@ export function Board({ scope }: { scope: Scope }) {
         {customizing && <BoardCustomize onClose={() => setCustomizing(false)} />}
 
         {show === "all" && (
-          <div className={"hb-top" + (home ? " with-notices" : "")}>
+          <div className={"hb-top" + (home && unreadNotices ? " with-notices" : "")}>
             <RightNow scope={scope} />
             {home && <NotificationsSection />}
             {home && <ChatWithBot />}

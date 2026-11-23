@@ -14,6 +14,8 @@ export interface ServerConfig {
   /** server-wide limits set by the Master Admin */
   media?: { max_share: string; max_camera: string; mic_default_kbps?: number; mic_max_kbps?: number; server_recording?: boolean };
   bot?: { id: string; name: string; server_backend: boolean; worker_policy: string };
+  /** Watch Party module: on, and which sources the instance allows */
+  watch?: { on: boolean; library: boolean; device: boolean };
 }
 
 interface State {

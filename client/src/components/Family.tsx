@@ -19,6 +19,7 @@ interface Kid {
     auto_approve_owners: string[];
     kid_safe_bot: boolean;
     can_delete: boolean;
+    watch_party?: boolean;
     quiet: { enabled: boolean; start: string; end: string; days: number[]; utc_offset_min: number };
   };
   requests: { id: string; kind: "dm" | "join"; target: any; created_at: number }[];
@@ -283,6 +284,9 @@ function KidCard({ k, open, onToggle, onChange, me }: { k: Kid; open: boolean; o
           </Row>
           <Row title="Can delete their own messages" desc="Off: their messages stay, so you can always see them.">
             <Toggle on={s.can_delete} onChange={(on) => set({ can_delete: on })} />
+          </Row>
+          <Row title="Watch Party" desc="Can join Watch Party spaces to watch videos with others in their servers.">
+            <Toggle on={!!s.watch_party} onChange={(on) => set({ watch_party: on })} />
           </Row>
           <Row title="Quiet hours" desc="No chatting or calls during these hours.">
             <Toggle on={s.quiet.enabled} onChange={(on) => setQuiet({ enabled: on })} />

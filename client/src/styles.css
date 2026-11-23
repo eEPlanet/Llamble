@@ -1079,9 +1079,8 @@ body.pop-body > .pop { height: 100vh; }
 .hb-title-sub { font-weight: 600; opacity: 0.75; }
 
 /* Board sub-entries in the left column */
-.channel.sub { padding-left: 50px; font-size: 14px; position: relative; }
-/* a thin guide line: Notes, Highlights, News… are parts of the Board above them */
-.channel.sub::before { content: ""; position: absolute; left: 30px; top: 4px; bottom: 4px; width: 2px; border-radius: 2px; background: var(--border, rgba(127, 127, 127, 0.3)); }
+/* Notes, Highlights, News… are parts of the Board above them: indented, nothing drawn */
+.channel.sub { padding-left: 50px; font-size: 14px; }
 .channel.soon { opacity: 0.55; cursor: default; }
 .channel.soon:hover { background: none; }
 .soon-tag { margin-left: auto; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; padding: 1px 6px; border-radius: 6px; background: var(--bg-3, rgba(127, 127, 127, 0.25)); }
@@ -1536,6 +1535,16 @@ body.pop-body > .pop { height: 100vh; }
 .hb-notices-head .hb-index-title { margin: 0; }
 .hb-notices-head .btn { margin-left: auto; }
 .hb-notices .notice-list { margin-top: 8px; gap: 6px; }
+/* the Notifications box is exactly as tall as Right now: its list scrolls inside, so the two
+   boxes always line up (Right now decides the row's height) */
+@media (min-width: 901px) {
+  .hb-top.with-notices { align-items: stretch; }
+  .hb-top.with-notices > :nth-child(3) { align-self: start; }
+  .hb-top.with-notices > .hb-index:first-child { min-height: 150px; }
+  .hb-top.with-notices > .hb-notices { position: relative; min-height: 150px; }
+  .hb-top.with-notices > .hb-notices .hb-notices-inner { position: absolute; inset: 12px 16px 14px; display: flex; flex-direction: column; }
+  .hb-top.with-notices > .hb-notices .notice-list { flex: 1; min-height: 0; overflow-y: auto; }
+}
 .hb-notices .notice { padding: 6px 8px; }
 .hb-notices .notice-text { font-size: 13px; }
 .hb-live-dot { font-size: 10px; font-weight: 800; letter-spacing: 0.05em; color: #fff; background: var(--red, #e5484d); border-radius: 4px; padding: 1px 5px; }
@@ -1559,3 +1568,42 @@ body.pop-body > .pop { height: 100vh; }
 .hb-notices .notice.unread { border-color: var(--accent, #4f8cff); background: color-mix(in srgb, var(--accent, #4f8cff) 8%, transparent); }
 .hb-notices .notice .muted { color: inherit; opacity: 0.6; }
 .hb-plain .hb-notices .notice { background: var(--bg-2, rgba(127, 127, 127, 0.1)); border-color: var(--border, rgba(127, 127, 127, 0.2)); }
+
+/* ---- Watch Party ---- */
+.channel-emoji-icon { width: 18px; text-align: center; font-size: 14px; }
+.kind-emoji { font-size: 22px; width: 22px; text-align: center; }
+.watch-split { display: flex; height: 100%; min-height: 0; }
+.watch-main { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow-y: auto; }
+.watch-chat { width: 340px; flex: none; display: flex; border-left: 1px solid var(--border, #3f4147); min-height: 0; }
+.watch-chat > * { flex: 1; min-width: 0; }
+@media (max-width: 900px) { .watch-split { flex-direction: column; } .watch-chat { width: auto; height: 45%; border-left: 0; border-top: 1px solid var(--border, #3f4147); } }
+.watch-emoji { font-size: 20px; }
+.watch-people { display: flex; gap: 2px; margin-left: auto; margin-right: 8px; }
+.watch-idle { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 40px 20px; gap: 4px; }
+.watch-idle-icon { font-size: 56px; }
+.watch-stage { padding: 12px 16px 0; }
+.watch-stage.empty { min-height: 200px; display: grid; place-items: center; }
+.watch-screen { position: relative; background: #000; border-radius: 10px; overflow: hidden; aspect-ratio: 16 / 9; max-height: 62vh; width: 100%; }
+.watch-video { width: 100%; height: 100%; display: block; object-fit: contain; background: #000; }
+.watch-video.yt > div, .watch-video.yt iframe { width: 100%; height: 100%; }
+.watch-problem { position: absolute; left: 12px; right: 12px; bottom: 12px; background: rgba(0, 0, 0, 0.75); color: #fff; padding: 8px 12px; border-radius: 8px; font-size: 13px; }
+.watch-live-tag { position: absolute; top: 10px; left: 10px; background: rgba(0, 0, 0, 0.6); color: #fff; padding: 3px 8px; border-radius: 6px; font-size: 12px; }
+.watch-bar { display: flex; flex-direction: column; gap: 6px; padding: 10px 0; }
+.watch-now { display: flex; flex-direction: column; min-width: 0; }
+.watch-progress { display: flex; align-items: center; gap: 8px; }
+.watch-progress input { flex: 1; }
+.watch-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.watch-vol { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+.watch-vol input { width: 110px; }
+.watch-queue { padding: 8px 16px 20px; display: flex; flex-direction: column; gap: 6px; }
+.watch-queue-head { display: flex; align-items: baseline; gap: 8px; }
+.watch-q { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 8px; background: var(--bg-2, rgba(127, 127, 127, 0.1)); }
+.watch-add { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+.watch-add input { flex: 1; }
+.watch-lib { display: flex; flex-direction: column; gap: 4px; max-height: 240px; overflow-y: auto; }
+.watch-lib-item { text-align: left; background: var(--bg-2, rgba(127, 127, 127, 0.1)); border: 1px solid var(--border, rgba(127, 127, 127, 0.2)); color: inherit; border-radius: 8px; padding: 8px 10px; cursor: pointer; font: inherit; }
+.watch-lib-item:hover { border-color: var(--accent, #4f8cff); }
+.watch-admin-lib { display: flex; flex-direction: column; gap: 6px; margin: 6px 0 12px; }
+.watch-held { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px; background: color-mix(in srgb, var(--accent, #4f8cff) 12%, transparent); font-size: 13px; }
+.watch-ask { display: inline-flex; align-items: center; gap: 6px; }
+.voice-panel-btns .btn.small { flex: 1; }

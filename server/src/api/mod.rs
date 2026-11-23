@@ -5,6 +5,7 @@ pub mod files;
 pub mod gifs;
 pub mod highlights;
 pub mod invite_cards;
+pub mod watch;
 pub mod notifications;
 pub mod notes;
 pub mod schedule;
@@ -66,6 +67,16 @@ pub fn router(state: Shared) -> Router<Shared> {
         .route("/api/invite-cards/{id}/decline", post(invite_cards::decline))
         .route("/api/invite-cards/{id}/remind/{uid}", post(invite_cards::remind))
         .route("/api/notifications", get(notifications::list))
+        .route("/api/channels/{cid}/watch", get(watch::get))
+        .route("/api/channels/{cid}/watch/queue", post(watch::add))
+        .route("/api/channels/{cid}/watch/queue/{iid}", delete(watch::remove))
+        .route("/api/channels/{cid}/watch/control", post(watch::control))
+        .route("/api/channels/{cid}/watch/skip", post(watch::vote_skip))
+        .route("/api/channels/{cid}/watch/ask-to-talk", post(watch::ask_to_talk))
+        .route("/api/channels/{cid}/watch/let-talk/{uid}", post(watch::let_talk))
+        .route("/api/channels/{cid}/lock", post(voice::lock))
+        .route("/api/watch/library", get(watch::library).post(watch::library_add))
+        .route("/api/watch/library/{fid}", delete(watch::library_remove))
         .route("/api/notifications/read", post(notifications::mark_read))
         .route("/api/notifications/{id}", delete(notifications::remove))
         .route("/api/channels/{cid}", patch(guilds::update_channel).delete(guilds::delete_channel))

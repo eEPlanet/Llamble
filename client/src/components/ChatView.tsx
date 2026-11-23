@@ -52,7 +52,7 @@ export function ChatView({ channel }: { channel: Channel }) {
       }}
     >
       <header className="chat-header">
-        {channel.kind === "dm" ? <Avatar user={otherUser} size={24} status /> : <Icon name={party ? "users" : "hash"} size={22} className="muted" />}
+        {channel.kind === "dm" ? <Avatar user={otherUser} size={24} status /> : channel.kind === "watch" ? <span className="muted">💬</span> : <Icon name={party ? "users" : "hash"} size={22} className="muted" />}
         <span className="chat-title">{title}</span>
         {otherUser?.is_bot && <BotTag />}
         {channel.topic && <span className="chat-topic ellipsis">{channel.topic}</span>}
@@ -92,15 +92,15 @@ export function ChatView({ channel }: { channel: Channel }) {
             if (party) items.unshift(...partyMenuItems(channel));
             if (channel.guild_id && can(channel.guild_id, P.MANAGE_GUILD))
               items.push({
-                label: "Clear all messages in this channel",
+                label: "Clear all messages in this space",
                 danger: true,
                 onClick: () =>
                   openModal({
                     kind: "confirm",
                     title: `Clear #${channel.name}?`,
-                    body: "Every message in this channel is deleted for everyone. This can't be undone.",
+                    body: "Every message in this space is deleted for everyone. This can't be undone.",
                     danger: true,
-                    confirmLabel: "Clear channel",
+                    confirmLabel: "Clear space",
                     onConfirm: () => api(`/api/channels/${channel.id}/messages/all`, { method: "DELETE" }),
                   }),
               });
@@ -145,7 +145,7 @@ export function ChatView({ channel }: { channel: Channel }) {
           <MessageList channel={channel} />
           <TypingBar channelId={channel.id} guildId={channel.guild_id} />
           <SelectBar channelId={channel.id} />
-          <Composer ref={composer} channel={channel} placeholder={channel.kind === "dm" ? `Message @${title}` : party ? `Message ${channel.name}` : `Message #${channel.name}`} />
+          <Composer ref={composer} channel={channel} placeholder={channel.kind === "dm" ? `Message @${title}` : party || channel.kind !== "text" ? `Message ${channel.name}` : `Message #${channel.name}`} />
         </div>
         {results && (
           <div className="search-results">
@@ -167,7 +167,7 @@ export function ChatView({ channel }: { channel: Channel }) {
         <div className="drop-overlay">
           <div>
             <Icon name="attach" size={40} />
-            <h3>Upload to {channel.kind === "dm" || party ? title : "#" + channel.name}</h3>
+            <h3>Upload to {channel.kind === "dm" || party ? title : (channel.kind === "text" ? "#" : "") + channel.name}</h3>
           </div>
         </div>
       )}
@@ -331,7 +331,7 @@ function MessageList({ channel }: { channel: Channel }) {
             </div>
           );
         })}
-        {!canSend && <div className="muted small pad">You can read this channel but can't send messages here.</div>}
+        {!canSend && <div className="muted small pad">You can read this space but can't send messages here.</div>}
       </div>
     </div>
   );
@@ -362,11 +362,9 @@ function ChannelStart({ channel }: { channel: Channel }) {
         </>
       ) : (
         <>
-          <div className="channel-start-icon">
-            <Icon name="hash" size={40} />
-          </div>
-          <h1>Welcome to #{channel.name}!</h1>
-          <p className="muted">This is the start of the #{channel.name} channel.{bot ? ` Mention @${bot.name} to ask the AI (if it's enabled here).` : ""}</p>
+          <div className="channel-start-icon">{channel.kind === "watch" ? <span style={{ fontSize: 36 }}>🍿</span> : <Icon name="hash" size={40} />}</div>
+          <h1>Welcome to {channel.kind === "text" ? "#" : ""}{channel.name}!</h1>
+          <p className="muted">This is the start of {channel.kind === "text" ? `#${channel.name}` : channel.kind === "watch" ? "this Watch Party's chat" : "this space's chat"}.{bot ? ` Mention @${bot.name} to ask the AI (if it's enabled here).` : ""}</p>
         </>
       )}
     </div>

@@ -107,7 +107,7 @@ function CreateGuild() {
   return (
     <form className="modal" onSubmit={run}>
       <h2>Create a server</h2>
-      <p className="muted">A server is where your clients, channels, and voice rooms live.</p>
+      <p className="muted">A server is where your people, chats and voice rooms live.</p>
       <label>
         Server name
         <input value={name} onChange={(e) => setName(e.target.value)} autoFocus maxLength={100} />
@@ -171,7 +171,8 @@ function JoinInvite({ code: initial }: { code?: string }) {
 }
 
 function CreateChannel({ guildId, parentId, kind: initialKind }: { guildId: string; parentId: string | null; kind?: "text" | "voice" | "category" }) {
-  const [kind, setKind] = useState<"text" | "voice" | "category">(initialKind || "text");
+  const [kind, setKind] = useState<"text" | "voice" | "watch" | "category">(initialKind || "text");
+  const watchOn = useStore((s) => s.config.watch?.on ?? false);
   const [name, setName] = useState("");
   const [parent, setParent] = useState(parentId);
   const cats = useStore(useShallow((s) => Object.values(s.channels).filter((c) => c.guild_id === guildId && c.kind === "category")));
@@ -181,16 +182,16 @@ function CreateChannel({ guildId, parentId, kind: initialKind }: { guildId: stri
   });
   return (
     <form className="modal" onSubmit={run}>
-      <h2>Create {kind === "category" ? "Category" : "Channel"}</h2>
+      <h2>{kind === "category" ? "Create Category" : "Add a Space"}</h2>
       {kind !== "category" && (
         <div className="kind-pick">
-          {(["text", "voice"] as const).map((k) => (
+          {((watchOn ? ["text", "voice", "watch"] : ["text", "voice"]) as ("text" | "voice" | "watch")[]).map((k) => (
             <label key={k} className={"kind-opt" + (kind === k ? " on" : "")}>
               <input type="radio" checked={kind === k} onChange={() => setKind(k)} />
-              <Icon name={k === "text" ? "hash" : "speaker"} size={22} />
+              {k === "watch" ? <span className="kind-emoji">🍿</span> : <Icon name={k === "text" ? "hash" : "speaker"} size={22} />}
               <div>
-                <b>{k === "text" ? "Text" : "Voice"}</b>
-                <div className="muted small">{k === "text" ? "Messages, images, GIFs, files" : "Talk, video, and screen share"}</div>
+                <b>{k === "text" ? "Chat" : k === "voice" ? "Voice & Video" : "Watch Party"}</b>
+                <div className="muted small">{k === "text" ? "Messages, images, GIFs, files" : k === "voice" ? "Talk, video, and screen share" : "Watch together: a shared player and queue, with voice and chat"}</div>
               </div>
             </label>
           ))}
@@ -198,7 +199,7 @@ function CreateChannel({ guildId, parentId, kind: initialKind }: { guildId: stri
       )}
       <label>
         Name
-        <input value={name} onChange={(e) => setName(kind === "text" ? e.target.value.toLowerCase().replace(/\s+/g, "-") : e.target.value)} autoFocus maxLength={100} placeholder={kind === "text" ? "new-channel" : kind === "voice" ? "Lounge" : "PROJECTS"} />
+        <input value={name} onChange={(e) => setName(kind === "text" ? e.target.value.toLowerCase().replace(/\s+/g, "-") : e.target.value)} autoFocus maxLength={100} placeholder={kind === "text" ? "new-channel" : kind === "voice" ? "Lounge" : kind === "watch" ? "Movie Night" : "PROJECTS"} />
       </label>
       {kind !== "category" && cats.length > 0 && (
         <label>
@@ -236,7 +237,7 @@ function EditChannel({ channelId }: { channelId: string }) {
   if (!ch) return null;
   return (
     <form className="modal" onSubmit={run}>
-      <h2>Edit {ch.kind === "category" ? "Category" : "Channel"}</h2>
+      <h2>Edit {ch.kind === "category" ? "Category" : "Space"}</h2>
       <label>
         Name
         <input value={name} onChange={(e) => setName(e.target.value)} autoFocus />

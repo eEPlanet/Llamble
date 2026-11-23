@@ -74,9 +74,9 @@ pub async fn create_guild(State(state): State<Shared>, auth: AuthUser, Json(req)
     let cat_text = new_id();
     let cat_voice = new_id();
     for (cid, kind, cname, parent, pos) in [
-        (cat_text.clone(), "category", "Text Channels", None, 0),
+        (cat_text.clone(), "category", "Chat", None, 0),
         (new_id(), "text", "general", Some(cat_text.clone()), 0),
-        (cat_voice.clone(), "category", "Voice Channels", None, 1),
+        (cat_voice.clone(), "category", "Voice & Video", None, 1),
         (new_id(), "voice", "General", Some(cat_voice.clone()), 0),
     ] {
         sqlx::query("INSERT INTO channels (id, guild_id, kind, name, parent_id, position, created_at) VALUES (?,?,?,?,?,?,?)")
@@ -204,8 +204,11 @@ pub fn clean_channel_name(kind: &str, name: &str) -> String {
 
 pub async fn create_channel(State(state): State<Shared>, auth: AuthUser, Path(gid): Path<String>, Json(req): Json<CreateChannel>) -> ApiResult<Json<Channel>> {
     require_guild(&state.db, &gid, &auth.id, perms::MANAGE_CHANNELS).await?;
-    if !["text", "voice", "category"].contains(&req.kind.as_str()) {
-        return Err(AppError::bad("kind must be text, voice or category"));
+    if !["text", "voice", "category", "watch"].contains(&req.kind.as_str()) {
+        return Err(AppError::bad("kind must be text, voice, watch or category"));
+    }
+    if req.kind == "watch" && !state.s().watch_party {
+        return Err(AppError::forbidden_msg("Watch Party is turned off on this Llamble"));
     }
     let name = clean_channel_name(&req.kind, &req.name);
     if name.is_empty() {

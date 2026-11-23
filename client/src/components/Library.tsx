@@ -191,7 +191,7 @@ function RecordingRow({ r, reload }: { r: Row; reload: () => void }) {
               </button>
             )}
             {shareable && (
-              <button className={"btn small" + (panel === "video" ? " primary" : "")} title="Post just the video in a channel" onClick={() => setPanel(panel === "video" ? null : "video")}>
+              <button className={"btn small" + (panel === "video" ? " primary" : "")} title="Post just the video in a chat" onClick={() => setPanel(panel === "video" ? null : "video")}>
                 Post the video
               </button>
             )}
