@@ -30,7 +30,12 @@ fn guess_mime(filename: &str, declared: Option<&str>, head: &[u8]) -> String {
         return fmt.to_mime_type().to_string();
     }
     // a few common magic numbers
+    // the app's voice recordings (Opus in WebM/MP4) are sent marked as audio: keep them audio
+    let says_audio = declared.map(|d| d.starts_with("audio/")).unwrap_or(false);
     if head.len() > 12 && &head[4..8] == b"ftyp" {
+        if says_audio {
+            return "audio/mp4".into();
+        }
         let brand = &head[8..12];
         if brand == b"qt  " {
             return "video/quicktime".into();
@@ -41,7 +46,7 @@ fn guess_mime(filename: &str, declared: Option<&str>, head: &[u8]) -> String {
         return "video/mp4".into();
     }
     if head.starts_with(&[0x1A, 0x45, 0xDF, 0xA3]) {
-        return "video/webm".into();
+        return if says_audio { "audio/webm" } else { "video/webm" }.into();
     }
     if head.starts_with(b"%PDF") {
         return "application/pdf".into();

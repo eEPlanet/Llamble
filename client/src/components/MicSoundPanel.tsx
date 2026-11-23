@@ -228,6 +228,7 @@ function LiveChannels() {
 function HearMyself({ sound }: { sound: MicSound }) {
   const [on, setOn] = useState(false);
   const [level, setLevel] = useState(0);
+  const [problem, setProblem] = useState("");
   const key = JSON.stringify(sound);
   useEffect(() => {
     if (!on) return;
@@ -236,28 +237,41 @@ function HearMyself({ sound }: { sound: MicSound }) {
     let chain: Chain | null = null;
     let monitor: GainNode | null = null;
     const ctx = micContext();
+    setProblem("");
     const dev = prefs.get("audioInput");
-    navigator.mediaDevices
-      .getUserMedia({
+    const open = (deviceId?: string) =>
+      navigator.mediaDevices.getUserMedia({
         audio: {
-          deviceId: dev || undefined,
+          deviceId: deviceId ? { exact: deviceId } : undefined,
           echoCancellation: sound.echoCancellation,
           noiseSuppression: sound.noise === "browser",
           autoGainControl: sound.autoGainControl,
           channelCount: sound.stereo ? 2 : 1,
           sampleRate: 48000,
         },
-      })
+      });
+    // the picked mic may be gone (unplugged, or a new device): fall back to the default one
+    open(dev || undefined)
+      .catch((e) => (dev ? open() : Promise.reject(e)))
       .then(async (s) => {
         stream = s;
         if (stop) return s.getTracks().forEach((t) => t.stop());
-        chain = await buildChain(ctx, s.getAudioTracks()[0], sound);
-        if (stop) return chain.destroy();
+        await ctx.resume().catch(() => {});
+        let tail: AudioNode;
+        try {
+          chain = await buildChain(ctx, s.getAudioTracks()[0], sound);
+          tail = chain.tail;
+        } catch (e: any) {
+          // the sound processing couldn't start: let them hear the plain mic, and say why
+          setProblem(`Your sound settings couldn't start (${e?.message || e}), so this is your plain mic.`);
+          tail = ctx.createMediaStreamSource(s);
+        }
+        if (stop) return chain?.destroy();
         monitor = ctx.createGain();
-        chain.tail.connect(monitor);
+        tail.connect(monitor);
         monitor.connect(ctx.destination);
         const an = ctx.createAnalyser();
-        chain.tail.connect(an);
+        tail.connect(an);
         const buf = new Float32Array(an.fftSize);
         const tick = () => {
           if (stop) return;
@@ -269,7 +283,19 @@ function HearMyself({ sound }: { sound: MicSound }) {
         };
         tick();
       })
-      .catch(() => setOn(false));
+      .catch((e: any) => {
+        setOn(false);
+        const name = e?.name || "";
+        setProblem(
+          name === "NotAllowedError"
+            ? "Llamble isn't allowed to use the mic. Allow it in your browser or system settings, then try again."
+            : name === "NotFoundError"
+              ? "No mic was found."
+              : name === "NotReadableError"
+                ? "The mic is busy in another app (or Windows/Android blocked it). Close the other app and try again."
+                : `The mic couldn't start: ${e?.message || e}`,
+        );
+      });
     return () => {
       stop = true;
       try {
@@ -282,13 +308,21 @@ function HearMyself({ sound }: { sound: MicSound }) {
   }, [on, key]);
   return (
     <div className="hear-myself">
-      <button className={"btn" + (on ? " primary" : "")} onClick={() => setOn(!on)}>
+      <button
+        className={"btn" + (on ? " primary" : "")}
+        onClick={() => {
+          // start the sound engine during the tap (browsers only allow sound after a tap)
+          if (!on) micContext().resume().catch(() => {});
+          setOn(!on);
+        }}
+      >
         {on ? "Stop listening" : "Hear myself"}
       </button>
       <div className="meter">
         <div style={{ width: `${Math.min(100, level * 100)}%`, background: level > 0.95 ? "var(--red, #e5484d)" : undefined }} />
       </div>
       <div className="muted small">Plays your mic back exactly as others will hear it, with every setting above. Use headphones.</div>
+      {problem && <div className="error-text small">{problem}</div>}
     </div>
   );
 }

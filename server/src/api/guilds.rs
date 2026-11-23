@@ -39,6 +39,7 @@ pub async fn add_member(state: &Shared, guild_id: &str, user_id: &str) -> ApiRes
         .execute(&state.db)
         .await?;
     if r.rows_affected() > 0 {
+        crate::api::invite_cards::joined_guild(state, guild_id, user_id).await;
         let m = load_member(&state.db, guild_id, user_id).await?;
         state.emit_guild(guild_id, "GUILD_MEMBER_ADD", &m).await;
         let payload = guild_payload(state, guild_id).await?;
@@ -412,6 +413,8 @@ pub async fn kick_member(State(state): State<Shared>, auth: AuthUser, Path((gid,
             return Err(AppError::forbidden());
         }
         remove_member_inner(&state, &gid, &uid).await?;
+        let guild = crate::api::notifications::guild_brief(&state, &gid).await;
+        crate::api::notifications::notify(&state, &uid, "server_removed", Some(&gid), json!({ "guild": guild, "banned": false })).await;
     }
     Ok(Json(json!({ "ok": true })))
 }
@@ -435,6 +438,8 @@ pub async fn ban_member(State(state): State<Shared>, auth: AuthUser, Path((gid, 
             .bind(&uid).bind(&gid).execute(&state.db).await?;
     }
     remove_member_inner(&state, &gid, &uid).await?;
+    let guild = crate::api::notifications::guild_brief(&state, &gid).await;
+    crate::api::notifications::notify(&state, &uid, "server_removed", Some(&gid), json!({ "guild": guild, "banned": true })).await;
     Ok(Json(json!({ "ok": true })))
 }
 

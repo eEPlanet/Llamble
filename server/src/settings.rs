@@ -38,6 +38,15 @@ pub struct ServerSettings {
     /// what this instance calls the people list: "Friends" (default), "Contacts", or its own word
     #[serde(default = "default_people_name")]
     pub people_name: String,
+    /// who you can find when inviting people to a server: "connections" (your friends and
+    /// people who share a server with you) or "everyone" on the instance. Kids never show
+    /// up, except to their own parents.
+    #[serde(default = "default_invite_search")]
+    pub invite_search: String,
+}
+
+fn default_invite_search() -> String {
+    "connections".into()
 }
 
 fn default_people_name() -> String {
@@ -64,6 +73,7 @@ impl ServerSettings {
             llamble_news_url: "https://llamble.com/news.json".into(),
             require_https: false,
             people_name: default_people_name(),
+            invite_search: default_invite_search(),
         }
     }
     pub fn max_upload_bytes(&self) -> u64 {
@@ -171,6 +181,9 @@ pub async fn put_settings(State(state): State<Shared>, auth: AuthUser, Json(req)
     let local_test = std::env::var("LLAMBLE_NEWS_TEST_KEY").is_ok() && s.llamble_news_url.starts_with("http://127.0.0.1");
     if !s.llamble_news_url.starts_with("https://") && !local_test {
         return Err(AppError::bad("the Llamble news address must start with https://"));
+    }
+    if !["connections", "everyone"].contains(&s.invite_search.as_str()) {
+        return Err(AppError::bad("invite_search must be connections or everyone"));
     }
     s.people_name = s.people_name.trim().chars().take(20).collect();
     if s.people_name.is_empty() {

@@ -306,7 +306,10 @@ function InviteModal({ guildId }: { guildId: string }) {
   return (
     <div className="modal">
       <h2>Invite people to {guild?.name}</h2>
-      <p className="muted small">Send this link. It opens a sign-up page in any browser (phone, Chromebook, laptop). People with the desktop app can paste it into Register instead.</p>
+      <InviteSearch guildId={guildId} />
+      <SendToParty guildId={guildId} />
+      <div className="sidebar-sep" />
+      <p className="muted small">Not on Llamble yet? Send this link. It opens a sign-up page in any browser (phone, Chromebook, laptop). People with the desktop app can paste it into Register instead.</p>
       {inv && (
         <>
           <label>Invite link</label>
@@ -320,7 +323,6 @@ function InviteModal({ guildId }: { guildId: string }) {
             Code <b>{inv.code}</b> · server <b>{serverAddress()}</b>
             {!useStore.getState().config.public_domain && " · this home address only works on your network until Remote Access is on"}
           </div>
-          <SendToParty guildName={guild?.name || "my server"} link={inviteLink(inv.code)} />
         </>
       )}
       <div className="row gap">
@@ -532,9 +534,72 @@ function SaveGif({ fileId, url: initialUrl, preview }: { fileId?: string; url?: 
 }
 
 /** Invite a whole party: posts the invite in the party's chat. */
-function SendToParty({ guildName, link }: { guildName: string; link: string }) {
+/** Search people on this instance and send each an invite card in your DM with them. */
+function InviteSearch({ guildId }: { guildId: string }) {
+  const [q, setQ] = useState("");
+  const [found, setFound] = useState<any[]>([]);
+  const [scope, setScope] = useState("connections");
+  const [sent, setSent] = useState<string[]>([]);
+  const [busy, setBusy] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => {
+      api(`/api/guilds/${guildId}/invite-search?q=${encodeURIComponent(q.trim())}`)
+        .then((r) => {
+          setFound(r.people);
+          setScope(r.scope);
+        })
+        .catch(() => setFound([]));
+    }, 200);
+    return () => clearTimeout(t);
+  }, [q, guildId]);
+  const invite = async (uid: string) => {
+    setBusy(uid);
+    try {
+      const r = await api(`/api/guilds/${guildId}/invite-people`, { body: { user_ids: [uid] } });
+      if (r.sent.length) setSent((x) => [...x, uid]);
+      else toast(r.skipped[0]?.why || "They can't be invited", "error");
+    } catch (e: any) {
+      toast(e.message, "error");
+    } finally {
+      setBusy("");
+    }
+  };
+  return (
+    <div className="invite-search">
+      <label>
+        Find people on this Llamble
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Name or username" autoFocus />
+      </label>
+      <div className="muted small">{scope === "everyone" ? "Everyone on this Llamble." : "Your friends and people who share a server with you."} The invite goes to your chat with them.</div>
+      <div className="invite-results">
+        {found.map((u) => (
+          <div key={u.id} className="invite-result">
+            <Avatar user={u} size={32} />
+            <span className="grow ellipsis">
+              <b>{u.display_name}</b> <span className="muted small">@{u.username}</span>
+              {u.your_kid && <span className="muted small"> · your kid</span>}
+            </span>
+            {u.member ? (
+              <span className="muted small">Already in</span>
+            ) : sent.includes(u.id) ? (
+              <span className="muted small">Invited ✓</span>
+            ) : (
+              <button className="btn small primary" disabled={busy === u.id} onClick={() => invite(u.id)}>
+                Invite
+              </button>
+            )}
+          </div>
+        ))}
+        {!found.length && q.trim() && <div className="muted small">Nobody found.</div>}
+      </div>
+    </div>
+  );
+}
+
+/** Invite a whole party: one card in the party's chat that shows who has joined. */
+function SendToParty({ guildId }: { guildId: string }) {
   const channels = useStore((s) => s.channels);
-  const parties = useMemo(() => Object.values(channels).filter((c) => c.kind === "party"), [channels]);
+  const parties = useMemo(() => Object.values(channels).filter((c) => c.kind === "party" && !(c as any).unsaved), [channels]);
   const [sent, setSent] = useState<string[]>([]);
   if (!parties.length) return null;
   return (
@@ -546,7 +611,7 @@ function SendToParty({ guildName, link }: { guildName: string; link: string }) {
           className="btn small"
           disabled={sent.includes(p.id)}
           onClick={() =>
-            api(`/api/channels/${p.id}/messages`, { body: { content: `Come join me in ${guildName}: ${link}` } })
+            api(`/api/guilds/${guildId}/invite-party`, { body: { party_id: p.id } })
               .then(() => setSent((x) => [...x, p.id]))
               .catch((e) => toast(e.message, "error"))
           }

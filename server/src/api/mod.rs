@@ -4,6 +4,8 @@ pub mod embeds;
 pub mod files;
 pub mod gifs;
 pub mod highlights;
+pub mod invite_cards;
+pub mod notifications;
 pub mod notes;
 pub mod schedule;
 pub mod social;
@@ -56,6 +58,16 @@ pub fn router(state: Shared) -> Router<Shared> {
         .route("/api/guilds/{gid}/bans/{uid}", put(guilds::ban_member).delete(guilds::unban_member))
         .route("/api/guilds/{gid}/invites", post(guilds::create_invite).get(guilds::list_invites))
         .route("/api/invites/{code}", get(guilds::preview_invite).post(guilds::accept_invite).delete(guilds::delete_invite))
+        .route("/api/guilds/{gid}/invite-search", get(invite_cards::search))
+        .route("/api/guilds/{gid}/invite-people", post(invite_cards::invite_people))
+        .route("/api/guilds/{gid}/invite-party", post(invite_cards::invite_party))
+        .route("/api/invite-cards/{id}", get(invite_cards::get))
+        .route("/api/invite-cards/{id}/join", post(invite_cards::join))
+        .route("/api/invite-cards/{id}/decline", post(invite_cards::decline))
+        .route("/api/invite-cards/{id}/remind/{uid}", post(invite_cards::remind))
+        .route("/api/notifications", get(notifications::list))
+        .route("/api/notifications/read", post(notifications::mark_read))
+        .route("/api/notifications/{id}", delete(notifications::remove))
         .route("/api/channels/{cid}", patch(guilds::update_channel).delete(guilds::delete_channel))
         .route("/api/channels/{cid}/messages", get(messages::list_messages).post(messages::create_message))
         .route("/api/channels/{cid}/search", get(messages::search))

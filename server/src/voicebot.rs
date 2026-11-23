@@ -985,7 +985,26 @@ pub fn transcribe_note(state: Shared, ch: Channel, mid: String, file_id: String)
 
 async fn note_text(state: &Shared, file_id: &str) -> anyhow::Result<String> {
     let s = load_settings(state).await;
-    let bytes = tokio::fs::read(crate::api::files::file_path(state, file_id)).await?;
+    let path = crate::api::files::file_path(state, file_id);
+    let mut bytes = tokio::fs::read(&path).await?;
+    if wav_pcm_16k(&bytes).is_none() {
+        // recorded at full quality (Opus): make the 16 kHz mono copy speech recognition reads
+        let out = tokio::time::timeout(
+            Duration::from_secs(120),
+            tokio::process::Command::new("ffmpeg")
+                .args(["-hide_banner", "-loglevel", "error", "-i"])
+                .arg(&path)
+                .args(["-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", "-f", "wav", "-"])
+                .kill_on_drop(true)
+                .output(),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("converting took too long"))??;
+        if !out.status.success() {
+            anyhow::bail!("couldn't read the recording");
+        }
+        bytes = out.stdout;
+    }
     let pcm = wav_pcm_16k(&bytes).ok_or_else(|| anyhow::anyhow!("not a 16 kHz mono WAV"))?;
     // Whisper hears up to 30 s at a time: go through it in 28 s pieces
     let mut out = vec![];
