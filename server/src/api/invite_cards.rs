@@ -9,7 +9,6 @@
 //! parents, and only a parent can invite their kid (to a server the parent is in).
 use crate::error::{new_id, now_ms, ApiResult, AppError};
 use crate::models::load_channel;
-use crate::perms::{self, require_guild};
 use crate::state::{AuthUser, Shared};
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
@@ -94,7 +93,7 @@ pub struct SearchQ {
 
 /// GET /api/guilds/{gid}/invite-search?q= — people you could invite (needs Create invite).
 pub async fn search(State(state): State<Shared>, auth: AuthUser, Path(gid): Path<String>, Query(sq): Query<SearchQ>) -> ApiResult<Json<Value>> {
-    require_guild(&state.db, &gid, &auth.id, perms::CREATE_INVITE).await?;
+    crate::api::discover::require_inviter(&state, &gid, &auth.id).await?;
     let q = sq.q.trim().trim_start_matches('@').to_lowercase();
     let like = format!("%{}%", q.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"));
     // your own kids first, then everyone who matches
@@ -213,11 +212,14 @@ async fn dm_with(state: &Shared, a: &str, b: &str) -> ApiResult<String> {
 #[derive(Deserialize)]
 pub struct InvitePeople {
     pub user_ids: Vec<String>,
+    /// whoever joins from it becomes your friend
+    #[serde(default)]
+    pub add_friend: bool,
 }
 
 /// POST /api/guilds/{gid}/invite-people {user_ids} — one card in each person's DM.
 pub async fn invite_people(State(state): State<Shared>, auth: AuthUser, Path(gid): Path<String>, headers: HeaderMap, Json(req): Json<InvitePeople>) -> ApiResult<Json<Value>> {
-    require_guild(&state.db, &gid, &auth.id, perms::CREATE_INVITE).await?;
+    crate::api::discover::require_inviter(&state, &gid, &auth.id).await?;
     if auth.is_kid {
         return Err(AppError::forbidden_msg("Ask a parent to invite people."));
     }
@@ -234,6 +236,9 @@ pub async fn invite_people(State(state): State<Shared>, auth: AuthUser, Path(gid
         }
         let dm = dm_with(&state, &auth.id, &u).await?;
         let card = post_card(&state, &auth, headers.clone(), &dm, &gid, false, &[u.clone()]).await?;
+        if req.add_friend {
+            sqlx::query("UPDATE invite_cards SET add_friend = 1 WHERE id = ?").bind(&card).execute(&state.db).await?;
+        }
         sent.push(json!({ "user_id": u, "card_id": card, "channel_id": dm }));
     }
     Ok(Json(json!({ "sent": sent, "skipped": skipped })))
@@ -246,7 +251,7 @@ pub struct InviteParty {
 
 /// POST /api/guilds/{gid}/invite-party {party_id} — one card in the party's chat.
 pub async fn invite_party(State(state): State<Shared>, auth: AuthUser, Path(gid): Path<String>, headers: HeaderMap, Json(req): Json<InviteParty>) -> ApiResult<Json<Value>> {
-    require_guild(&state.db, &gid, &auth.id, perms::CREATE_INVITE).await?;
+    crate::api::discover::require_inviter(&state, &gid, &auth.id).await?;
     if auth.is_kid {
         return Err(AppError::forbidden_msg("Ask a parent to invite people."));
     }
@@ -374,6 +379,10 @@ pub async fn join(State(state): State<Shared>, auth: AuthUser, Path(id): Path<St
         return Err(AppError::bad("this invite has ended (the person who sent it isn't in the server anymore)"));
     }
     crate::api::guilds::add_member(&state, &c.guild_id, &auth.id).await?;
+    let befriend: bool = sqlx::query_scalar("SELECT add_friend FROM invite_cards WHERE id = ?").bind(&id).fetch_one(&state.db).await.unwrap_or(false);
+    if befriend {
+        crate::api::discover::make_friends(&state, &c.inviter_id, &auth.id).await;
+    }
     sqlx::query("UPDATE invite_card_people SET joined_at = COALESCE(joined_at, ?) WHERE card_id = ? AND user_id = ?").bind(now_ms()).bind(&id).bind(&auth.id).execute(&state.db).await?;
     crate::api::notifications::clear_ref(&state, &auth.id, "server_invite", &id).await;
     if !c.party {

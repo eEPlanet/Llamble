@@ -30,9 +30,15 @@ pub struct Guild {
     pub highlights_auto_pictures: bool,
     /// Home → highlights: finished show recordings are added automatically
     pub highlights_auto_recordings: bool,
+    /// who can get in: open | preview | request | invite (see api::discover)
+    #[sqlx(default)]
+    pub join_mode: String,
+    /// a few words shown under Open servers
+    #[sqlx(default)]
+    pub description: String,
 }
 
-pub const GUILD_COLS: &str = "id, name, icon_file_id, owner_id, created_at, highlights_auto_pictures, highlights_auto_recordings";
+pub const GUILD_COLS: &str = "id, name, icon_file_id, owner_id, created_at, highlights_auto_pictures, highlights_auto_recordings, join_mode, description";
 
 #[derive(Serialize, FromRow, Clone, Debug)]
 pub struct Role {

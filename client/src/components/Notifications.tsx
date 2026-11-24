@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import { clearNotice, markRead, openCardChat, useNotices, type Notice } from "../notifications";
 import { openFriend, openHome, selectChannel, useStore } from "../store";
-import { toast } from "../ui";
+import { openModal, toast } from "../ui";
 import { Avatar, GuildIcon } from "./common";
 
 function ago(t: number): string {
@@ -32,7 +32,19 @@ function describe(n: Notice): { text: string; who?: any; guild?: any; open?: () 
         open: () => d.channel_id && openCardChat(d.channel_id, !!d.party),
       };
     case "invite_accepted":
-      return { text: `${nameOf(d.by)} joined ${d.guild?.name || "your server"} from your invite`, who: d.by, open: () => d.guild?.id && selectChannel(d.guild.id, null) };
+      return d.guild
+        ? { text: `${nameOf(d.by)} joined ${d.guild.name || "your server"} from your invite`, who: d.by, open: () => d.guild?.id && selectChannel(d.guild.id, null) }
+        : { text: `${nameOf(d.by)} joined Llamble from your invite`, who: d.by, open: () => openFriend(d.by?.id || null) };
+    case "join_request":
+      return { text: `${nameOf(d.from)} asked to join ${d.guild?.name || "your server"}${d.note ? `: “${d.note}”` : ""}`, who: d.from, open: () => d.guild?.id && openModal({ kind: "serverSettings", guildId: d.guild.id, tab: "requests" }) };
+    case "join_approved":
+      return {
+        text: d.pending_parent ? `${d.guild?.name || "A server"} said yes. A parent needs to OK it too.` : `You're in: ${d.guild?.name || "a server"} approved your request`,
+        guild: d.guild,
+        open: () => !d.pending_parent && d.guild?.id && selectChannel(d.guild.id, null),
+      };
+    case "join_declined":
+      return { text: `${d.guild?.name || "A server"} declined your request to join`, guild: d.guild };
     case "friend_request":
       return { text: `${nameOf(d.from)} wants to be friends`, who: d.from, open: () => openFriend(d.from?.id || null) };
     case "friend_accepted":
@@ -97,6 +109,16 @@ function NoticeRow({ n, compact }: { n: Notice; compact?: boolean }) {
               </button>
               <button className="btn small" disabled={busy} onClick={() => act(() => api(`/api/invite-cards/${d.card_id}/decline`, { method: "POST" }))}>
                 No thanks
+              </button>
+            </>
+          )}
+          {n.kind === "join_request" && (
+            <>
+              <button className="btn small primary" disabled={busy} onClick={() => act(() => api(`/api/guilds/${d.guild.id}/join-requests/${d.from.id}/approve`, { method: "POST" }))}>
+                Approve
+              </button>
+              <button className="btn small" disabled={busy} onClick={() => act(() => api(`/api/guilds/${d.guild.id}/join-requests/${d.from.id}/decline`, { method: "POST" }))}>
+                Decline
               </button>
             </>
           )}

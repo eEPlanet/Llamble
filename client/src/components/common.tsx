@@ -53,6 +53,8 @@ const PATHS: Record<string, string> = {
   play: "M5 3l14 9-14 9V3z",
   expand: "M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7",
   bell: "M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0",
+  // two lenses and a bridge (Open servers: find servers to join)
+  binoculars: "M6 20a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM18 20a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM2.5 16.5V8a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2v8.5M14.5 16.5V8a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2v8.5M9.5 11h5M5 6V4h3v2M16 6V4h3v2",
   cpu: "M4 4h16v16H4zM9 9h6v6H9zM9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3",
 };
 

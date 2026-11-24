@@ -147,6 +147,9 @@ pub struct UpdateGuild {
     pub icon_file_id: Option<Option<String>>,
     pub highlights_auto_pictures: Option<bool>,
     pub highlights_auto_recordings: Option<bool>,
+    /// open | preview | request | invite
+    pub join_mode: Option<String>,
+    pub description: Option<String>,
 }
 
 pub async fn update_guild(State(state): State<Shared>, auth: AuthUser, Path(gid): Path<String>, Json(req): Json<UpdateGuild>) -> ApiResult<Json<Guild>> {
@@ -165,6 +168,16 @@ pub async fn update_guild(State(state): State<Shared>, auth: AuthUser, Path(gid)
     }
     if let Some(v) = req.highlights_auto_recordings {
         sqlx::query("UPDATE guilds SET highlights_auto_recordings = ? WHERE id = ?").bind(v).bind(&gid).execute(&state.db).await?;
+    }
+    if let Some(m) = req.join_mode {
+        if !crate::api::discover::MODES.contains(&m.as_str()) {
+            return Err(AppError::bad("join_mode must be open, preview, request or invite"));
+        }
+        sqlx::query("UPDATE guilds SET join_mode = ?, listed_at = CASE WHEN ? <> 'invite' AND listed_at IS NULL THEN ? ELSE listed_at END WHERE id = ?")
+            .bind(&m).bind(&m).bind(now_ms()).bind(&gid).execute(&state.db).await?;
+    }
+    if let Some(d) = req.description {
+        sqlx::query("UPDATE guilds SET description = ? WHERE id = ?").bind(d.trim().chars().take(200).collect::<String>()).bind(&gid).execute(&state.db).await?;
     }
     let g = sqlx::query_as::<_, Guild>(&format!("SELECT {GUILD_COLS} FROM guilds WHERE id = ?"))
         .bind(&gid).fetch_one(&state.db).await?;
@@ -467,16 +480,19 @@ pub struct CreateInvite {
     pub max_uses: Option<i64>,
     /// seconds; 0/None = never
     pub expires_in: Option<i64>,
+    /// whoever uses it becomes your friend
+    #[serde(default)]
+    pub add_friend: bool,
 }
 
 pub async fn create_invite(State(state): State<Shared>, auth: AuthUser, Path(gid): Path<String>, Json(req): Json<CreateInvite>) -> ApiResult<Json<Value>> {
-    require_guild(&state.db, &gid, &auth.id, perms::CREATE_INVITE).await?;
+    crate::api::discover::require_inviter(&state, &gid, &auth.id).await?;
     let code = invite_code();
     let exp = req.expires_in.filter(|s| *s > 0).map(|s| now_ms() + s * 1000);
-    sqlx::query("INSERT INTO invites (code, guild_id, creator_id, max_uses, expires_at, created_at) VALUES (?,?,?,?,?,?)")
-        .bind(&code).bind(&gid).bind(&auth.id).bind(req.max_uses.unwrap_or(0).max(0)).bind(exp).bind(now_ms())
+    sqlx::query("INSERT INTO invites (code, guild_id, creator_id, max_uses, expires_at, created_at, add_friend) VALUES (?,?,?,?,?,?,?)")
+        .bind(&code).bind(&gid).bind(&auth.id).bind(req.max_uses.unwrap_or(0).max(0)).bind(exp).bind(now_ms()).bind(req.add_friend)
         .execute(&state.db).await?;
-    Ok(Json(json!({ "code": code, "guild_id": gid, "max_uses": req.max_uses.unwrap_or(0), "expires_at": exp, "uses": 0 })))
+    Ok(Json(json!({ "code": code, "guild_id": gid, "max_uses": req.max_uses.unwrap_or(0), "expires_at": exp, "uses": 0, "add_friend": req.add_friend })))
 }
 
 pub async fn list_invites(State(state): State<Shared>, auth: AuthUser, Path(gid): Path<String>) -> ApiResult<Json<Value>> {
@@ -530,6 +546,7 @@ pub async fn accept_invite(State(state): State<Shared>, auth: AuthUser, Path(cod
         add_member(&state, g, &auth.id).await?;
     }
     crate::api::auth::consume_invite(&state, &code).await?;
+    crate::api::discover::after_invite(&state, &code, &auth.id).await;
     Ok(Json(json!({ "guild_id": gid })))
 }
 

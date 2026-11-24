@@ -19,7 +19,9 @@ export type ModalSpec =
   | { kind: "recoveryCode"; code: string }
   | { kind: "share"; msg: import("./types").Message }
   | { kind: "party"; partyId?: string; with?: string[] }
-  | { kind: "newDm" };
+  | { kind: "newDm" }
+  | { kind: "llambleInvite" }
+  | { kind: "discover"; guildId?: string };
 
 export interface MenuItem {
   label: string;

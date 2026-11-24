@@ -1,4 +1,4 @@
-// App colors. Navy (the logo's navy, with the logo ring's blue as the accent) is the default;
+// App colors. Navy is the default background and green the default highlight;
 // Graphite is a neutral dark gray; "Custom" lets you pick any background and accent color.
 // Chosen in Settings → Appearance, kept on this device.
 export const THEMES = [
@@ -103,19 +103,33 @@ export function setCustomBase(c: string) {
 }
 export function setCustomAccent(c: string) {
   put("llamble.customAccent", c);
-  applyAccent("custom");
+  applyAccent("custom", true);
 }
+
+// The highlight is only saved when someone picks one, so a device that never chose follows the
+// default (green). ("llamble.highlight" replaced "llamble.accent", which saved the old blue
+// default on every device.)
+const HIGHLIGHT_KEY = "llamble.highlight";
+export const DEFAULT_ACCENT: AccentId = "green";
 
 export function currentAccent(): AccentId {
-  const a = get("llamble.accent");
-  return ACCENTS.some((x) => x.id === a) ? (a as AccentId) : "blue";
+  const a = get(HIGHLIGHT_KEY);
+  return ACCENTS.some((x) => x.id === a) ? (a as AccentId) : DEFAULT_ACCENT;
 }
 
-export function applyAccent(id: AccentId = currentAccent()) {
+/** Back to the default highlight (forget this device's pick). */
+export function resetAccent() {
+  try {
+    localStorage.removeItem(HIGHLIGHT_KEY);
+  } catch {}
+  applyAccent(DEFAULT_ACCENT);
+}
+
+export function applyAccent(id: AccentId = currentAccent(), save = false) {
   if (id === "blue" || id === "custom") delete document.documentElement.dataset.accent;
   else document.documentElement.dataset.accent = id;
   setVars(id === "custom" ? accentFromColor(customAccent()) : null, ACCENT_VARS);
-  put("llamble.accent", id);
+  if (save) put(HIGHLIGHT_KEY, id);
 }
 
 export function currentTheme(): ThemeId {

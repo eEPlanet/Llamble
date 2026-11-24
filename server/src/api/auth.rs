@@ -133,9 +133,10 @@ pub async fn register(State(state): State<Shared>, Json(req): Json<RegisterReq>)
             .await?;
     }
     consume_invite(&state, &req.invite).await?;
-    if let Some(g) = guild_id {
-        add_member(&state, &g, &id).await?;
+    if let Some(g) = &guild_id {
+        add_member(&state, g, &id).await?;
     }
+    crate::api::discover::after_signup(&state, &req.invite, &id, &guild_id).await;
     let token = create_session(&state, &id, req.device_name.as_deref().unwrap_or("")).await?;
     let recovery_code = new_recovery_code(&state, &id).await?;
     let user = get_user(&state.db, &id).await?;

@@ -49,6 +49,7 @@ run stay_in_call "${LK[@]}" LIVEKIT_INTERNAL_URL=http://127.0.0.1:8093 -- stay_i
 run voicemsg -- voicemsg_test.py http://127.0.0.1:8099
 run social -- social_test.py http://127.0.0.1:8099
 run invites -- invites_test.py http://127.0.0.1:8099
+run discover -- discover_test.py http://127.0.0.1:8099
 run status -- status_test.py http://127.0.0.1:8099
 run watch "${LK[@]}" -- watch_test.py http://127.0.0.1:8099
 run jellyfin -- jellyfin_test.py http://127.0.0.1:8099

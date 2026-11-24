@@ -6,7 +6,7 @@ import { sendGateway } from "../gateway";
 import { refreshVoicemailCount, useVoicemailCount, VoicemailInbox } from "./VoiceMessage";
 import { useCalls } from "../calls";
 import { useUnreadNotices } from "../notifications";
-import { can, channelSort, currentChannelId, homeOf, isMessages, isUnread, memberName, notesForMe, openGuildView, openHome, openLibrary, openMessages, openMyProfile, selectChannel, useStore, type MsgTab } from "../store";
+import { can, canInvite, channelSort, currentChannelId, homeOf, isMessages, isUnread, memberName, notesForMe, openGuildView, openHome, openLibrary, openMessages, openMyProfile, selectChannel, useStore, type MsgTab } from "../store";
 import { P, type Channel } from "../types";
 import { copy, openMenu, openModal, toggleCollapsed, toast, useUI } from "../ui";
 import { canShareScreen, joinVoice, leaveVoice, stopScreenShare, toggleCamera, toggleDeafen, toggleMute, setPeopleMuted, useVoice } from "../voice";
@@ -33,7 +33,7 @@ function GuildHeader({ guildId }: { guildId: string }) {
   const me = useStore((s) => s.me);
   if (!guild) return null;
   const items = [
-    { label: "Invite People", onClick: () => openModal({ kind: "invite", guildId }), disabled: !can(guildId, P.CREATE_INVITE) },
+    { label: "Invite People", onClick: () => openModal({ kind: "invite", guildId }), disabled: !canInvite(guildId) },
     { label: "Server Settings", onClick: () => openModal({ kind: "serverSettings", guildId }), disabled: !can(guildId, P.MANAGE_GUILD) && !can(guildId, P.MANAGE_ROLES) && !can(guildId, P.BAN) },
     { label: "AI Bot", onClick: () => openModal({ kind: "serverSettings", guildId, tab: "bot" }), disabled: !can(guildId, P.MANAGE_GUILD) },
     { separator: true, label: "" },

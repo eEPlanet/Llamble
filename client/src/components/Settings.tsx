@@ -11,7 +11,7 @@ import { useShallow } from "zustand/react/shallow";
 import React, { useEffect, useRef, useState } from "react";
 import { api, formatBytes, session, upload } from "../api";
 import { chosenGpu, preparePictures, refreshGpus, saveAiConfig, setLending, startLocalModel, stopLocalModel, useAi, type AiConfig } from "../aiWorker";
-import { can, guildPerms, memberName, useStore } from "../store";
+import { can, guildPerms, isStaff, memberName, useStore } from "../store";
 import { GUEST_DENY, P, PERM_LABELS, type Role, type User } from "../types";
 import { closeModal, copy, openModal, toast } from "../ui";
 import { SHARE_LABELS, SHARE_ORDER, applyDevicePrefs, shareAudioBitrate, cameraAllowed, defaultShareQuality, prefs, setDefaultShareQuality, shareAllowed, type ShareQuality } from "../voice";
@@ -25,8 +25,9 @@ import { CameraFxPicker } from "./CameraFx";
 import { PicturesAdmin } from "./PicturesAdmin";
 import { BotToolsAdmin, GuildVoiceListen, MicTest, VoiceAiAdmin } from "./VoiceAi";
 import { WatchAdmin } from "./Watch";
+import { JOIN_MODES } from "./Discover";
 import { Recordings } from "./Library";
-import { ACCENTS, THEMES, applyAccent, applyTheme, currentAccent, currentTheme, customAccent, customBase, setCustomAccent, setCustomBase, themeFromBase } from "../theme";
+import { ACCENTS, DEFAULT_ACCENT, THEMES, applyAccent, resetAccent, applyTheme, currentAccent, currentTheme, customAccent, customBase, setCustomAccent, setCustomBase, themeFromBase } from "../theme";
 import { androidListener, androidSend, isAndroidApp } from "../android";
 
 /** Shows the problem instead of a blank window when a settings page crashes. */
@@ -108,6 +109,7 @@ export function ServerSettings({ guildId, tab: initial }: { guildId: string; tab
         { id: "roles", label: "Roles", hidden: !can(guildId, P.MANAGE_ROLES) },
         { id: "members", label: "Members" },
         { id: "invites", label: "Invites", hidden: !can(guildId, P.MANAGE_GUILD) },
+        { id: "requests", label: "Requests to join", hidden: !isStaff(guildId) || (guild.join_mode || "invite") === "invite" || guild.join_mode === "open" },
         { id: "bans", label: "Bans", hidden: !can(guildId, P.BAN) },
         { id: "bot", label: "AI Bot", hidden: !can(guildId, P.MANAGE_GUILD) },
         { id: "delete", label: "Delete Server", hidden: !isOwner && !me.is_admin, danger: true },
@@ -117,6 +119,7 @@ export function ServerSettings({ guildId, tab: initial }: { guildId: string; tab
       {tab === "roles" && <Roles guildId={guildId} />}
       {tab === "members" && <Members guildId={guildId} />}
       {tab === "invites" && <Invites guildId={guildId} />}
+      {tab === "requests" && <JoinRequests guildId={guildId} />}
       {tab === "bans" && <Bans guildId={guildId} />}
       {tab === "bot" && <BotSettings guildId={guildId} />}
       {tab === "delete" && (
@@ -186,6 +189,7 @@ function Overview({ guildId }: { guildId: string }) {
           </div>
         </div>
       </div>
+      <WhoCanGetIn guildId={guildId} />
       <div className="profile-section">Highlights</div>
       <p className="muted small">Highlights collect this server's best moments. Members add them by hand from any message's ⋯ menu; these add things automatically.</p>
       {(
@@ -361,6 +365,80 @@ function Members({ guildId }: { guildId: string }) {
             )}
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+/** Overview → Who can get in: the four join types, plus the description shown under Open servers. */
+function WhoCanGetIn({ guildId }: { guildId: string }) {
+  const guild = useStore((s) => s.guilds[guildId])!;
+  const mode = guild.join_mode || "invite";
+  const [desc, setDesc] = useState(guild.description || "");
+  const patch = (body: any) =>
+    api(`/api/guilds/${guildId}`, { method: "PATCH", body })
+      .then((g) => useStore.setState((st) => ({ guilds: { ...st.guilds, [guildId]: { ...st.guilds[guildId], ...g } } })))
+      .catch((e) => toast(e.message, "error"));
+  return (
+    <>
+      <div className="profile-section">Who can get in</div>
+      <div className="join-modes">
+        {JOIN_MODES.map((m) => (
+          <label key={m.id} className={"join-mode" + (mode === m.id ? " on" : "")}>
+            <input type="radio" name={"jm-" + guildId} checked={mode === m.id} onChange={() => patch({ join_mode: m.id })} />
+            <span>
+              <span className="bold">{m.label}</span>
+              <span className="muted small"> {m.help}</span>
+            </span>
+          </label>
+        ))}
+      </div>
+      {mode !== "invite" && (
+        <label>
+          Description (shown under Open servers)
+          <div className="row gap">
+            <input className="grow" value={desc} maxLength={200} onChange={(e) => setDesc(e.target.value)} placeholder="What this server is for" />
+            <button className="btn" disabled={desc === (guild.description || "")} onClick={() => patch({ description: desc }).then(() => toast("Saved"))}>
+              Save
+            </button>
+          </div>
+        </label>
+      )}
+    </>
+  );
+}
+
+/** Staff: people asking to join. */
+function JoinRequests({ guildId }: { guildId: string }) {
+  const [list, setList] = useState<any[] | null>(null);
+  const load = () => api(`/api/guilds/${guildId}/join-requests`).then(setList).catch(() => setList([]));
+  useEffect(() => {
+    load();
+  }, []);
+  const decide = (uid: string, what: "approve" | "decline") =>
+    api(`/api/guilds/${guildId}/join-requests/${uid}/${what}`, { method: "POST" })
+      .then(load)
+      .catch((e) => (toast(e.message, "error"), load()));
+  return (
+    <div>
+      <h2>Requests to join</h2>
+      <div className="member-table">
+        {(list || []).map((r) => (
+          <div key={r.user.id} className="member-trow">
+            <Avatar user={r.user} size={32} />
+            <span className="grow">
+              <b>{r.user.display_name || r.user.username}</b> <span className="muted small">@{r.user.username}</span>
+              {r.note && <div className="muted small">“{r.note}”</div>}
+            </span>
+            <button className="btn small primary" onClick={() => decide(r.user.id, "approve")}>
+              Approve
+            </button>
+            <button className="btn small" onClick={() => decide(r.user.id, "decline")}>
+              Decline
+            </button>
+          </div>
+        ))}
+        {list && !list.length && <p className="muted">No requests right now.</p>}
       </div>
     </div>
   );
@@ -1310,6 +1388,7 @@ function Admin() {
             <Avatar user={u} size={28} />
             <span className="grow">
               <b>{u.display_name}</b> <span className="muted">@{u.username}</span> {levelLabel(u)} {u.is_bot && <BotTag />}
+              {(u as any).invited_by && <span className="muted small"> · invited by @{(u as any).invited_by}</span>}
             </span>
             {!u.is_bot && u.id !== me.id && (
               <>
@@ -1707,6 +1786,13 @@ function ServerConfig() {
         </select>
       </label>
       <p className="muted small">Kid accounts never show up in search. Only a kid's parent can invite them, to a server the parent is in.</p>
+      <div className="perm-row">
+        <div>
+          <div className="bold">Members can invite people to Llamble</div>
+          <div className="muted small">Anyone here (not kids) can make a one-time link that signs someone up, without adding them to a server. Links run out after 7 days. Accounts shows who invited whom.</div>
+        </div>
+        <Toggle on={f.member_invites !== false} onChange={(v) => set("member_invites", v)} />
+      </div>
 
       <WatchAdmin f={f} set={set} />
 
@@ -2565,7 +2651,7 @@ function Appearance() {
         {ACCENTS.map((a) => {
           const custom = a.id === "custom";
           return (
-            <label key={a.id} className={"theme-pick" + (accent === a.id ? " on" : "")} onClick={() => { if (!custom) { applyAccent(a.id); setAccent(a.id); } }}>
+            <label key={a.id} className={"theme-pick" + (accent === a.id ? " on" : "")} onClick={() => { if (!custom) { applyAccent(a.id, true); setAccent(a.id); } }}>
               <span className="accent-dot" style={{ background: custom ? acc : a.color }}>{custom && <b className="theme-swatch-pen">🎨</b>}</span>
               {a.label}
               {custom && (
@@ -2574,15 +2660,15 @@ function Appearance() {
                   className="color-pick"
                   value={acc}
                   onChange={(e) => { setAcc(e.target.value); setCustomAccent(e.target.value); setAccent("custom"); }}
-                  onClick={() => { applyAccent("custom"); setAccent("custom"); }}
+                  onClick={() => { applyAccent("custom", true); setAccent("custom"); }}
                 />
               )}
             </label>
           );
         })}
       </div>
-      {(theme !== "navy" || accent !== "blue") && (
-        <button className="btn" style={{ marginTop: 18 }} onClick={() => { applyAccent("blue"); applyTheme("navy"); setTheme("navy"); setAccent("blue"); }}>
+      {(theme !== "navy" || accent !== DEFAULT_ACCENT) && (
+        <button className="btn" style={{ marginTop: 18 }} onClick={() => { resetAccent(); applyTheme("navy"); setTheme("navy"); setAccent(DEFAULT_ACCENT); }}>
           Back to the Llamble colors
         </button>
       )}
