@@ -559,9 +559,8 @@ function hookApi(path: string, opts: { method?: string; body?: unknown }): Promi
 
 // ---------- the practice voice room ----------
 
-export const usePractice = create<{ joined: string | null; level: number; hearMe: boolean; camera: boolean; micError: string | null }>(() => ({
+export const usePractice = create<{ joined: string | null; hearMe: boolean; camera: boolean; micError: string | null }>(() => ({
   joined: null,
-  level: 0,
   hearMe: false,
   camera: false,
   micError: null,
@@ -601,17 +600,21 @@ async function startMic() {
     an.fftSize = 512;
     micCtx.createMediaStreamSource(mic).connect(an);
     const buf = new Uint8Array(an.fftSize);
+    // like a real room: light up once you're talking, stay lit through short pauses
+    let smooth = 0;
+    let lastLoud = 0;
     const tick = () => {
       an.getByteTimeDomainData(buf);
       let peak = 0;
       for (const v of buf) peak = Math.max(peak, Math.abs(v - 128));
-      const muted = useVoice.getState().muted;
-      const level = muted ? 0 : Math.min(1, peak / 60);
-      usePractice.setState({ level });
+      const level = useVoice.getState().muted ? 0 : Math.min(1, peak / 60);
+      smooth = level > smooth ? smooth + (level - smooth) * 0.5 : smooth * 0.92;
+      const now = performance.now();
+      if (smooth > 0.15) lastLoud = now;
       const me = W?.me.id;
       if (me) {
         const sp = useVoice.getState().speaking;
-        const on = level > 0.12;
+        const on = now - lastLoud < 500;
         if (on !== sp.includes(me)) useVoice.setState({ speaking: on ? [...sp, me] : sp.filter((x) => x !== me) });
       }
       micRaf = requestAnimationFrame(tick);
@@ -645,7 +648,7 @@ export function leavePractice() {
   mic = null;
   micCtx?.close().catch(() => {});
   micCtx = null;
-  usePractice.setState({ joined: null, level: 0, camera: false });
+  usePractice.setState({ joined: null, camera: false });
   useVoice.setState({ channelId: null, status: "idle", speaking: [] });
   if (w) handleEvent("VOICE_STATE_UPDATE", { user_id: w.me.id, channel_id: null });
 }
@@ -759,7 +762,7 @@ function steps(ctx: TourCtx, w: World): Step[] {
     ctx.voice && {
       id: "talk-room",
       title: "You're in",
-      text: "Say something and watch your ring light up. Turn on Hear myself to check how you sound. The mic button mutes you.",
+      text: "Say something and watch your picture light up. Turn on Hear myself to check how you sound. The mic button mutes you.",
       target: ".practice-voice",
       nav: false,
     },

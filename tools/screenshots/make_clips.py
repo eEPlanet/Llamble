@@ -39,6 +39,22 @@ def picture(path):
 PIC = os.path.join(tmp, "lake-sunset.png")
 picture(PIC)
 
+# a voice-like test sound for the mic: a few seconds of "talking" (syllables), then a pause
+def talking(path, secs=24, rate=16000):
+    import math, wave, random
+    random.seed(4)
+    frames = bytearray()
+    for i in range(secs * rate):
+        t = i / rate
+        cycle = t % 5.0
+        on = cycle < 3.2 and (math.sin(t * 2 * math.pi * 3.1) > -0.6)
+        amp = 0.35 * (0.6 + 0.4 * math.sin(t * 2 * math.pi * 1.3)) if on else 0.0
+        v = amp * (math.sin(2 * math.pi * 180 * t) + 0.5 * math.sin(2 * math.pi * 360 * t) + 0.2 * (random.random() - 0.5))
+        frames += int(max(-1, min(1, v)) * 20000).to_bytes(2, "little", signed=True)
+    w = wave.open(path, "wb"); w.setnchannels(1); w.setsampwidth(2); w.setframerate(rate); w.writeframes(bytes(frames)); w.close()
+VOICE = os.path.join(tmp, "talking.wav")
+talking(VOICE)
+
 POINTER = """
 (() => {
   const d = document.createElement('div');
@@ -57,7 +73,7 @@ CSS = ".rec-clean .tut-card, .rec-clean .tut-spot, .rec-clean .tut-dim { display
 
 marks = []
 with sync_playwright() as p:
-    b = p.chromium.launch(args=["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream", "--autoplay-policy=no-user-gesture-required"])
+    b = p.chromium.launch(args=["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream", f"--use-file-for-fake-audio-capture={VOICE}", "--autoplay-policy=no-user-gesture-required"])
     ctx = b.new_context(viewport={"width": 1280, "height": 760}, record_video_dir=tmp, record_video_size={"width": 1280, "height": 760}, permissions=["microphone"])
     ctx.add_init_script(POINTER)
     pg = ctx.new_page()

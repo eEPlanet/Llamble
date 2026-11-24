@@ -150,11 +150,11 @@ PAGES = [
         "lead": "Each server decides how people join, and who looks after it.",
         "media": ("img", "open-servers", "Open servers you can find and join"),
         "cards": [
-            ("🚪 Four ways in", [
-                "Open: listed, look around, then join",
-                "Look around, then request to join",
-                "Request only",
-                "Invite only: not listed",
+            ("🚪 How people join", [
+                "Open: anyone can find it and join",
+                "Look around, then request: people can read it first, then ask to join",
+                "Request only: people ask to join, and staff say yes or no",
+                "Invite only: hidden from the list. Staff send invites",
             ]),
             ("🔭 Finding servers", [
                 "The binoculars list the open servers on your Llamble",

@@ -188,11 +188,6 @@ export function PracticeVoice({ channel }: { channel: Channel }) {
                 {u?.display_name}
                 {x.user_id === me?.id && v.muted && <Icon name="micOff" size={14} className="red" />}
               </div>
-              {x.user_id === me?.id && (
-                <div className="practice-meter" title="Your microphone">
-                  <div style={{ width: `${Math.round(p.level * 100)}%` }} />
-                </div>
-              )}
             </div>
           );
         })}
