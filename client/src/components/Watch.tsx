@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { create } from "zustand";
 import { Track } from "livekit-client";
-import { api, media, upload } from "../api";
+import { api, media, session, upload } from "../api";
 import { can, selectChannel, useStore } from "../store";
 import { P } from "../types";
 import type { Channel } from "../types";
@@ -22,7 +22,7 @@ const fmt = (ms: number) => {
   return h ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`;
 };
 
-const KIND_LABEL: Record<WatchItem["kind"], string> = { youtube: "YouTube", url: "Link", library: "Movie library", device: "From their device" };
+const KIND_LABEL: Record<WatchItem["kind"], string> = { youtube: "YouTube", url: "Link", library: "Movie library", jellyfin: "Jellyfin", device: "From their device" };
 
 export function WatchView({ channel }: { channel: Channel }) {
   const cid = channel.id;
@@ -247,12 +247,68 @@ function reportEnded(cid: string, item: WatchItem) {
 }
 
 /** A link or a library movie: a plain video element (HLS streams through hls.js where needed). */
+interface Source {
+  src: string;
+  /** converted (HLS) playback to fall back to if the file won't play as it is */
+  fallback?: string;
+  subs: { url: string; label: string; lang?: string; on?: boolean }[];
+}
+
+let libraryCache: Promise<any> | null = null;
+function libraryList(): Promise<any> {
+  libraryCache ||= api("/api/watch/library").finally(() => setTimeout(() => (libraryCache = null), 30_000));
+  return libraryCache;
+}
+
+/** Subtitles are fetched with your sign-in and handed to the player as a local file. */
+async function vttBlob(path: string): Promise<string> {
+  const r = await fetch(media(path));
+  if (!r.ok) throw new Error("no subtitles");
+  return URL.createObjectURL(new Blob([await r.text()], { type: "text/vtt" }));
+}
+
+async function resolveSource(item: WatchItem): Promise<Source> {
+  if (item.kind === "url") return { src: item.src, subs: [] };
+  if (item.kind === "library") {
+    const lib = await libraryList().catch(() => ({ movies: [] }));
+    const m = (lib.movies || []).find((x: any) => x.file_id === item.src);
+    const subs = m?.subs_file_id ? [{ url: await vttBlob(`/api/files/${m.subs_file_id}`).catch(() => ""), label: "Subtitles" }].filter((x) => x.url) : [];
+    return { src: media(`/api/files/${item.src}`), subs };
+  }
+  // Jellyfin
+  const s = await api(`/api/watch/jellyfin/${item.src}/session`, { method: "POST" });
+  const hls = session.server + s.hls;
+  const subs = [];
+  for (const t of s.subs || []) {
+    const url = await vttBlob(`/api/watch/jellyfin/${item.src}/subs/${t.index}?source=${encodeURIComponent(s.media_source_id)}`).catch(() => "");
+    if (url) subs.push({ url, label: t.label, lang: t.lang || undefined, on: !!t.default });
+  }
+  return s.direct ? { src: media(`/api/watch/jellyfin/${item.src}/stream`), fallback: hls, subs } : { src: hls, subs };
+}
+
+/** A link, a library movie or a Jellyfin item: one video element (HLS through hls.js where
+ * needed), lined up with the room, with subtitles (CC) when there are any. */
 function FilePlayer({ cid, item, vol }: { cid: string; item: WatchItem; vol: number }) {
   const ref = useRef<HTMLVideoElement>(null);
   const [problem, setProblem] = useState("");
-  const src = item.kind === "library" ? media(`/api/files/${item.src}`) : item.src;
+  const [source, setSource] = useState<Source | null>(null);
+  const [useFallback, setUseFallback] = useState(false);
+  const [cc, setCc] = useState(() => localStorage.getItem("llamble.cc") === "1");
+  useEffect(() => {
+    let dead = false;
+    setSource(null);
+    setUseFallback(false);
+    resolveSource(item)
+      .then((s) => !dead && setSource(s))
+      .catch((e) => !dead && setProblem(e.message || "This video couldn't be loaded."));
+    return () => {
+      dead = true;
+    };
+  }, [item.id]);
+  const src = source ? (useFallback && source.fallback ? source.fallback : source.src) : "";
   useEffect(() => {
     const el = ref.current!;
+    if (!src) return;
     let hls: any = null;
     const isHls = /\.m3u8(\?|$)/i.test(src);
     if (isHls && !el.canPlayType("application/vnd.apple.mpegurl")) {
@@ -269,13 +325,21 @@ function FilePlayer({ cid, item, vol }: { cid: string; item: WatchItem; vol: num
       el.load();
     };
   }, [src]);
+  // subtitles: show the default (or first) track when CC is on
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || !source) return;
+    const tracks = Array.from(el.textTracks);
+    const pick = Math.max(0, source.subs.findIndex((x) => x.on));
+    tracks.forEach((t, i) => (t.mode = cc && i === pick ? "showing" : "hidden"));
+  }, [cc, source, src]);
   useEffect(() => {
     if (ref.current) ref.current.volume = vol;
   }, [vol]);
   useSync(
     cid,
     item,
-    () => (ref.current ? { pos: ref.current.currentTime * 1000, paused: ref.current.paused } : null),
+    () => (ref.current && src ? { pos: ref.current.currentTime * 1000, paused: ref.current.paused } : null),
     (pos, play) => {
       const el = ref.current;
       if (!el) return;
@@ -290,11 +354,33 @@ function FilePlayer({ cid, item, vol }: { cid: string; item: WatchItem; vol: num
         ref={ref}
         className="watch-video"
         playsInline
-        onLoadedMetadata={(e) => setDuration(item.id, e.currentTarget.duration * 1000)}
+        onLoadedMetadata={(e) => {
+          setDuration(item.id, e.currentTarget.duration * 1000);
+          setProblem("");
+        }}
         onEnded={() => reportEnded(cid, item)}
-        onError={() => setProblem("This video couldn't be played here. The link may not allow it, or the format isn't supported.")}
+        onError={() => {
+          // the file as-is didn't play here: switch to Jellyfin's converted version
+          if (source?.fallback && !useFallback) return setUseFallback(true);
+          setProblem("This video couldn't be played here. The link may not allow it, or the format isn't supported.");
+        }}
         onClick={(e) => e.currentTarget.paused && useWatch.getState().byChannel[cid]?.now?.playing && e.currentTarget.play().then(() => setProblem(""))}
-      />
+      >
+        {source?.subs.map((t, i) => <track key={t.url} kind="subtitles" src={t.url} label={t.label} srcLang={t.lang} default={i === 0} />)}
+      </video>
+      {!!source?.subs.length && (
+        <button
+          className={"watch-cc" + (cc ? " on" : "")}
+          title={cc ? "Hide subtitles" : "Show subtitles"}
+          onClick={() => {
+            localStorage.setItem("llamble.cc", cc ? "0" : "1");
+            setCc(!cc);
+          }}
+        >
+          CC
+        </button>
+      )}
+      {!source && !problem && <div className="watch-problem">Loading…</div>}
       {problem && <div className="watch-problem">{problem}</div>}
     </>
   );
@@ -538,7 +624,7 @@ function Queue({ cid, st, inRoom }: { cid: string; st: WatchState; inRoom: boole
               </label>
             )}
           </div>
-          {lib && <LibraryPicker onPick={(m) => (add({ kind: "library", src: m.file_id }), setLib(false))} />}
+          {lib && <LibraryPicker onPick={(kind, id) => (add({ kind, src: id }), setLib(false))} />}
         </div>
       ) : (
         <div className="muted small">Join the room to add to the queue.</div>
@@ -547,29 +633,86 @@ function Queue({ cid, st, inRoom }: { cid: string; st: WatchState; inRoom: boole
   );
 }
 
-function LibraryPicker({ onPick }: { onPick: (m: { file_id: string; title: string }) => void }) {
-  const [movies, setMovies] = useState<{ file_id: string; title: string }[] | null>(null);
+/** Movies to pick: the instance's Jellyfin libraries and/or its uploaded movies, with posters. */
+function LibraryPicker({ onPick }: { onPick: (kind: "library" | "jellyfin", id: string) => void }) {
+  const [lib, setLib] = useState<{ jellyfin: boolean; movies: any[] } | null>(null);
+  const [tab, setTab] = useState<"jellyfin" | "uploaded">("jellyfin");
+  const [q, setQ] = useState("");
+  const [series, setSeries] = useState<{ id: string; title: string } | null>(null);
+  const [jf, setJf] = useState<any[] | null>(null);
   useEffect(() => {
     api("/api/watch/library")
-      .then((r) => setMovies(r.movies))
-      .catch(() => setMovies([]));
+      .then((r) => {
+        setLib(r);
+        if (!r.jellyfin) setTab("uploaded");
+      })
+      .catch(() => setLib({ jellyfin: false, movies: [] }));
   }, []);
-  if (!movies) return <div className="muted small">Loading…</div>;
-  if (!movies.length) return <div className="muted small">The movie library is empty. Instance staff can add movies in Settings → Watch Party.</div>;
+  useEffect(() => {
+    if (tab !== "jellyfin" || !lib?.jellyfin) return;
+    setJf(null);
+    const t = setTimeout(
+      () =>
+        api(`/api/watch/jellyfin/items?${series ? `series=${series.id}` : `q=${encodeURIComponent(q.trim())}`}`)
+          .then((r) => setJf(r.items))
+          .catch((e) => (toast(e.message, "error"), setJf([]))),
+      q ? 250 : 0,
+    );
+    return () => clearTimeout(t);
+  }, [tab, q, series, lib?.jellyfin]);
+  if (!lib) return <div className="muted small">Loading…</div>;
+  const uploaded = lib.movies.filter((m) => !q.trim() || m.title.toLowerCase().includes(q.trim().toLowerCase()));
   return (
     <div className="watch-lib">
-      {movies.map((m) => (
-        <button key={m.file_id} className="watch-lib-item" onClick={() => onPick(m)}>
-          🎬 {m.title}
-        </button>
-      ))}
+      <div className="row gap">
+        {lib.jellyfin && (
+          <div className="tabs">
+            <button className={"tab" + (tab === "jellyfin" ? " on" : "")} onClick={() => (setTab("jellyfin"), setSeries(null))}>
+              Jellyfin
+            </button>
+            <button className={"tab" + (tab === "uploaded" ? " on" : "")} onClick={() => setTab("uploaded")}>
+              Uploaded
+            </button>
+          </div>
+        )}
+        {!series && <input className="grow" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search" />}
+        {series && (
+          <button className="btn small" onClick={() => setSeries(null)}>
+            ‹ {series.title}
+          </button>
+        )}
+      </div>
+      <div className="poster-grid">
+        {tab === "jellyfin" &&
+          (jf === null ? (
+            <div className="muted small">Loading…</div>
+          ) : (
+            jf.map((it) => (
+              <button key={it.id} className="poster" onClick={() => (it.kind === "series" ? setSeries({ id: it.id, title: it.title }) : onPick("jellyfin", it.id))} title={it.title}>
+                {it.has_poster ? <img src={media(`/api/watch/jellyfin/${it.id}/poster`)} alt="" loading="lazy" /> : <span className="poster-blank">🎬</span>}
+                <span className="poster-title">{it.title}</span>
+                <span className="muted small">{it.kind === "series" ? "Show ›" : it.year || ""}</span>
+              </button>
+            ))
+          ))}
+        {tab === "uploaded" &&
+          uploaded.map((m) => (
+            <button key={m.file_id} className="poster" onClick={() => onPick("library", m.file_id)} title={m.title}>
+              {m.poster_file_id ? <img src={media(`/api/files/${m.poster_file_id}`)} alt="" loading="lazy" /> : <span className="poster-blank">🎬</span>}
+              <span className="poster-title">{m.title}</span>
+              {m.subs_file_id && <span className="muted small">CC</span>}
+            </button>
+          ))}
+        {tab === "uploaded" && !uploaded.length && <div className="muted small">No uploaded movies{q ? " match" : " yet. Instance staff can add them in Settings → Watch Party"}.</div>}
+        {tab === "jellyfin" && jf?.length === 0 && <div className="muted small">Nothing found.</div>}
+      </div>
     </div>
   );
 }
 
-/** Settings → Watch Party (instance staff): the module switches and the movie library. */
+/** Settings → Watch Party (instance staff): the module switches, Jellyfin and the uploaded movies. */
 export function WatchAdmin({ f, set }: { f: any; set: (k: string, v: any) => void }) {
-  const [movies, setMovies] = useState<{ file_id: string; title: string; size?: number }[]>([]);
+  const [movies, setMovies] = useState<any[]>([]);
   const [title, setTitle] = useState("");
   const [up, setUp] = useState<number | null>(null);
   const reload = () => api("/api/watch/library").then((r) => setMovies(r.movies)).catch(() => {});
@@ -583,10 +726,21 @@ export function WatchAdmin({ f, set }: { f: any; set: (k: string, v: any) => voi
       await api("/api/watch/library", { body: { file_id: u.id, title: title.trim() || file.name.replace(/\.[^.]+$/, "") } });
       setTitle("");
       reload();
+      // the poster and subtitles are pulled from the video in the background
+      setTimeout(reload, 6000);
     } catch (e: any) {
       toast(e.message, "error");
     } finally {
       setUp(null);
+    }
+  };
+  const attach = async (fid: string, what: "poster_file_id" | "subs_file_id", file: File) => {
+    try {
+      const u = await upload(file, file.name);
+      await api(`/api/watch/library/${fid}`, { method: "PATCH", body: { [what]: u.id } });
+      reload();
+    } catch (e: any) {
+      toast(e.message, "error");
     }
   };
   return (
@@ -602,7 +756,7 @@ export function WatchAdmin({ f, set }: { f: any; set: (k: string, v: any) => voi
       <label className="perm-row">
         <span className="grow">
           <b>Movie library</b>
-          <div className="muted small">Instance staff keep movies on this server for everyone's watch parties.</div>
+          <div className="muted small">Movies from your Jellyfin server and/or movies uploaded here, for everyone's watch parties.</div>
         </span>
         <input type="checkbox" checked={f.watch_library ?? true} onChange={(e) => set("watch_library", e.target.checked)} />
       </label>
@@ -613,14 +767,26 @@ export function WatchAdmin({ f, set }: { f: any; set: (k: string, v: any) => voi
         </span>
         <input type="checkbox" checked={f.watch_device_stream ?? true} onChange={(e) => set("watch_device_stream", e.target.checked)} />
       </label>
+      {(f.watch_library ?? true) && <JellyfinSetup f={f} set={set} />}
       {(f.watch_library ?? true) && (
         <div className="watch-admin-lib">
           <div className="small">
-            <b>Movies in the library</b> <span className="muted">(only add movies you have the right to show to your members)</span>
+            <b>Uploaded movies</b> <span className="muted">(only add movies you have the right to show to your members)</span>
           </div>
           {movies.map((m) => (
             <div key={m.file_id} className="watch-q">
-              <span className="grow ellipsis">🎬 {m.title}</span>
+              {m.poster_file_id ? <img className="lib-thumb" src={media(`/api/files/${m.poster_file_id}`)} alt="" /> : <span className="lib-thumb">🎬</span>}
+              <span className="grow ellipsis">
+                {m.title} {m.subs_file_id && <span className="muted small">· CC</span>}
+              </span>
+              <label className="btn small link" title="Use your own poster picture">
+                Poster…
+                <input type="file" accept="image/*" hidden onChange={(e) => e.target.files?.[0] && attach(m.file_id, "poster_file_id", e.target.files[0])} />
+              </label>
+              <label className="btn small link" title="Subtitles: a .srt or .vtt file">
+                Subtitles…
+                <input type="file" accept=".srt,.vtt,text/vtt" hidden onChange={(e) => e.target.files?.[0] && attach(m.file_id, "subs_file_id", e.target.files[0])} />
+              </label>
               <button className="btn small link" onClick={() => api(`/api/watch/library/${m.file_id}`, { method: "DELETE" }).then(reload)}>
                 Remove
               </button>
@@ -633,9 +799,84 @@ export function WatchAdmin({ f, set }: { f: any; set: (k: string, v: any) => voi
               <input type="file" accept="video/*" hidden disabled={up !== null} onChange={(e) => e.target.files?.[0] && addMovie(e.target.files[0])} />
             </label>
           </div>
+          <div className="muted small">Built-in subtitles are taken from the video automatically. Add a poster with Poster…; you can replace the subtitles with Subtitles….</div>
         </div>
       )}
     </>
+  );
+}
+
+/** Connect a Jellyfin server and choose which of its libraries to share. */
+function JellyfinSetup({ f, set }: { f: any; set: (k: string, v: any) => void }) {
+  const [url, setUrl] = useState(f.jellyfin_url || "");
+  const [key, setKey] = useState(f.jellyfin_key || "");
+  const [libs, setLibs] = useState<{ id: string; name: string; type?: string; shared: boolean }[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const save = (body: any) => api("/api/admin/settings", { method: "PUT", body });
+  const find = async () => {
+    setBusy(true);
+    try {
+      await save({ jellyfin_url: url.trim(), jellyfin_key: key.trim() });
+      set("jellyfin_url", url.trim());
+      set("jellyfin_key", key.trim());
+      setLibs((await api("/api/watch/jellyfin/libraries")).libraries);
+    } catch (e: any) {
+      toast(e.message, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+  useEffect(() => {
+    if (f.jellyfin_url && f.jellyfin_key) api("/api/watch/jellyfin/libraries").then((r) => setLibs(r.libraries)).catch(() => {});
+  }, []);
+  const toggle = async (id: string, on: boolean) => {
+    const next = Array.from(new Set([...(f.jellyfin_libraries || []).filter((x: string) => x !== id), ...(on ? [id] : [])]));
+    try {
+      await save({ jellyfin_libraries: next });
+      set("jellyfin_libraries", next);
+      setLibs((l) => l && l.map((x) => (x.id === id ? { ...x, shared: on } : x)));
+    } catch (e: any) {
+      toast(e.message, "error");
+    }
+  };
+  const disconnect = async () => {
+    await save({ jellyfin_url: "", jellyfin_key: "", jellyfin_libraries: [] }).catch(() => {});
+    set("jellyfin_url", "");
+    set("jellyfin_key", "");
+    set("jellyfin_libraries", []);
+    setUrl("");
+    setKey("");
+    setLibs(null);
+  };
+  return (
+    <div className="watch-admin-lib">
+      <div className="small">
+        <b>Jellyfin</b> <span className="muted">(play movies and shows from your Jellyfin server; members don't need Jellyfin accounts)</span>
+      </div>
+      <div className="row gap" style={{ flexWrap: "wrap" }}>
+        <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="http://your-nas:8096" />
+        <input type="password" value={key} onChange={(e) => setKey(e.target.value)} placeholder="API key (Jellyfin dashboard → API Keys)" autoComplete="off" />
+        <button className="btn small primary" disabled={busy || !url.trim() || !key.trim()} onClick={find}>
+          {busy ? "Connecting…" : libs ? "Reconnect" : "Connect"}
+        </button>
+        {f.jellyfin_url && (
+          <button className="btn small link" onClick={disconnect}>
+            Disconnect
+          </button>
+        )}
+      </div>
+      {libs && (
+        <>
+          <div className="muted small">Share these libraries with Watch Parties:</div>
+          {libs.map((l) => (
+            <label key={l.id} className="jf-lib-row">
+              <input type="checkbox" checked={l.shared} onChange={(e) => toggle(l.id, e.target.checked)} />
+              <span>{l.name}</span>
+            </label>
+          ))}
+        </>
+      )}
+    </div>
   );
 }
 

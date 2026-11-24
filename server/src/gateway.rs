@@ -82,7 +82,7 @@ async fn ready_payload(state: &Shared, auth: &AuthUser) -> anyhow::Result<Value>
             "max_upload_bytes": state.s().max_upload_bytes(),
             "guild_create": state.s().guild_create,
             "people_name": state.s().people_name,
-            "watch": { "on": state.s().watch_party, "library": state.s().watch_library, "device": state.s().watch_device_stream },
+            "watch": { "on": state.s().watch_party, "library": state.s().watch_library, "device": state.s().watch_device_stream, "jellyfin": state.s().watch_library && !state.s().jellyfin_url.is_empty() && !state.s().jellyfin_libraries.is_empty() },
             "media": {
                 "max_share": state.s().max_share,
                 "max_camera": state.s().max_camera,

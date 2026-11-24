@@ -51,6 +51,7 @@ run social -- social_test.py http://127.0.0.1:8099
 run invites -- invites_test.py http://127.0.0.1:8099
 run status -- status_test.py http://127.0.0.1:8099
 run watch "${LK[@]}" -- watch_test.py http://127.0.0.1:8099
+run jellyfin -- jellyfin_test.py http://127.0.0.1:8099
 run home -- home_test.py http://127.0.0.1:8099
 run alarms -- alarms_test.py http://127.0.0.1:8099
 NEWS_KEY=$(python3 -c "import base64;from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey as K;from cryptography.hazmat.primitives import serialization as s;print(base64.b64encode(K.from_private_bytes(bytes(range(32))).public_key().public_bytes(s.Encoding.Raw,s.PublicFormat.Raw)).decode())")

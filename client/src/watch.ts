@@ -9,7 +9,7 @@ import { getRoom } from "./voice";
 export interface WatchItem {
   id: string;
   added_by: string;
-  kind: "youtube" | "url" | "library" | "device";
+  kind: "youtube" | "url" | "library" | "jellyfin" | "device";
   src: string;
   title: string;
   created_at: number;

@@ -24,7 +24,7 @@ pub async fn migrate(pool: &sqlx::SqlitePool) -> anyhow::Result<()> {
             id TEXT PRIMARY KEY,
             channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
             added_by TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            kind TEXT NOT NULL,          -- youtube | url | library | device
+            kind TEXT NOT NULL,          -- youtube | url | library | jellyfin | device
             src TEXT NOT NULL,           -- YouTube id, link, library file id, or streamer's user id
             title TEXT NOT NULL,
             created_at INTEGER NOT NULL,
@@ -52,6 +52,9 @@ pub async fn migrate(pool: &sqlx::SqlitePool) -> anyhow::Result<()> {
     ] {
         sqlx::query(q).execute(pool).await?;
     }
+    // a poster and subtitles for uploaded movies (made from the video when it has them)
+    crate::db::add_column(pool, "watch_library", "poster_file_id", "TEXT").await?;
+    crate::db::add_column(pool, "watch_library", "subs_file_id", "TEXT").await?;
     Ok(())
 }
 
@@ -284,6 +287,10 @@ pub async fn add(State(state): State<Shared>, auth: AuthUser, Path(cid): Path<St
                 ("url", u.to_string(), if title_in.is_empty() { name } else { title_in })
             }
         }
+        "jellyfin" => {
+            let t = crate::api::jellyfin::queue_title(&state, req.src.trim()).await?;
+            ("jellyfin", req.src.trim().to_string(), t)
+        }
         "library" => {
             if !s.watch_library {
                 return Err(AppError::forbidden_msg("the movie library is turned off on this Llamble"));
@@ -304,7 +311,7 @@ pub async fn add(State(state): State<Shared>, auth: AuthUser, Path(cid): Path<St
             }
             ("device", auth.id.clone(), if title_in.is_empty() { "A video from my device".to_string() } else { title_in })
         }
-        _ => return Err(AppError::bad("kind must be youtube, url, library or device")),
+        _ => return Err(AppError::bad("kind must be youtube, url, library, jellyfin or device")),
     };
     let queued: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM watch_items WHERE channel_id = ? AND done = 0").bind(&cid).fetch_one(&state.db).await?;
     if queued >= 100 {
@@ -481,14 +488,15 @@ pub async fn library(State(state): State<Shared>, _auth: AuthUser) -> ApiResult<
     if !state.s().watch_library {
         return Ok(Json(json!({ "on": false, "movies": [] })));
     }
-    let rows: Vec<(String, String, i64, Option<i64>, String)> = sqlx::query_as(
-        "SELECT l.file_id, l.title, l.created_at, f.size, f.mime FROM watch_library l JOIN files f ON f.id = l.file_id ORDER BY lower(l.title)",
+    let rows: Vec<(String, String, i64, Option<i64>, String, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT l.file_id, l.title, l.created_at, f.size, f.mime, l.poster_file_id, l.subs_file_id FROM watch_library l JOIN files f ON f.id = l.file_id ORDER BY lower(l.title)",
     )
     .fetch_all(&state.db)
     .await?;
     Ok(Json(json!({
         "on": true,
-        "movies": rows.into_iter().map(|(id, t, c, size, mime)| json!({ "file_id": id, "title": t, "created_at": c, "size": size, "mime": mime })).collect::<Vec<_>>(),
+        "jellyfin": crate::api::watch::jellyfin_on(&state),
+        "movies": rows.into_iter().map(|(id, t, c, size, mime, poster, subs)| json!({ "file_id": id, "title": t, "created_at": c, "size": size, "mime": mime, "poster_file_id": poster, "subs_file_id": subs })).collect::<Vec<_>>(),
     })))
 }
 
@@ -518,7 +526,87 @@ pub async fn library_add(State(state): State<Shared>, auth: AuthUser, Json(req):
     let title: String = req.title.trim().chars().filter(|c| !c.is_control()).take(120).collect();
     let title = if title.is_empty() { f.filename.clone() } else { title };
     sqlx::query("INSERT OR REPLACE INTO watch_library (file_id, title, added_by, created_at) VALUES (?,?,?,?)").bind(&f.id).bind(&title).bind(&auth.id).bind(now_ms()).execute(&state.db).await?;
+    tokio::spawn(auto_extras(state.clone(), f.id.clone(), auth.id.clone()));
     Ok(Json(json!({ "file_id": f.id, "title": title })))
+}
+
+pub fn jellyfin_on(state: &Shared) -> bool {
+    let s = state.s();
+    s.watch_library && !s.jellyfin_url.is_empty() && !s.jellyfin_key.is_empty() && !s.jellyfin_libraries.is_empty()
+}
+
+/// Pull out the first text subtitle track, if the video has one. Runs after a movie is
+/// added. Posters are uploaded by staff.
+async fn auto_extras(state: Shared, file_id: String, uploader: String) {
+    let src = crate::api::files::file_path(&state, &file_id);
+    let run = |args: Vec<String>| async move {
+        tokio::time::timeout(std::time::Duration::from_secs(180), tokio::process::Command::new("ffmpeg").args(args).kill_on_drop(true).output()).await.ok().and_then(|r| r.ok())
+    };
+    let src_s = src.to_string_lossy().to_string();
+    if let Some(o) = run(vec!["-hide_banner".into(), "-loglevel".into(), "error".into(), "-i".into(), src_s, "-map".into(), "0:s:0".into(), "-f".into(), "webvtt".into(), "-".into()]).await {
+        if o.status.success() && o.stdout.len() > 10 {
+            if let Ok(sid) = crate::api::files::store_bytes(&state, &uploader, "subtitles.vtt", "text/vtt", &o.stdout).await {
+                let _ = sqlx::query("UPDATE watch_library SET subs_file_id = ? WHERE file_id = ? AND subs_file_id IS NULL").bind(&sid).bind(&file_id).execute(&state.db).await;
+            }
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct LibEdit {
+    #[serde(default)]
+    pub title: Option<String>,
+    /// an uploaded picture
+    #[serde(default)]
+    pub poster_file_id: Option<String>,
+    /// an uploaded .vtt or .srt file ("" removes the subtitles)
+    #[serde(default)]
+    pub subs_file_id: Option<String>,
+}
+
+/// PATCH /api/watch/library/{file_id} — staff set a movie's title, poster or subtitles.
+pub async fn library_edit(State(state): State<Shared>, auth: AuthUser, Path(fid): Path<String>, Json(req): Json<LibEdit>) -> ApiResult<Json<Value>> {
+    staff(&auth)?;
+    if let Some(t) = req.title {
+        let t: String = t.trim().chars().filter(|c| !c.is_control()).take(120).collect();
+        if !t.is_empty() {
+            sqlx::query("UPDATE watch_library SET title = ? WHERE file_id = ?").bind(&t).bind(&fid).execute(&state.db).await?;
+        }
+    }
+    if let Some(p) = req.poster_file_id {
+        let f = crate::models::get_file(&state.db, &p).await.map_err(|_| AppError::bad("upload the picture first"))?;
+        if !f.mime.starts_with("image/") {
+            return Err(AppError::bad("the poster must be a picture"));
+        }
+        sqlx::query("UPDATE watch_library SET poster_file_id = ? WHERE file_id = ?").bind(&p).bind(&fid).execute(&state.db).await?;
+    }
+    if let Some(sid) = req.subs_file_id {
+        if sid.is_empty() {
+            sqlx::query("UPDATE watch_library SET subs_file_id = NULL WHERE file_id = ?").bind(&fid).execute(&state.db).await?;
+        } else {
+            let f = crate::models::get_file(&state.db, &sid).await.map_err(|_| AppError::bad("upload the subtitles first"))?;
+            // players read WebVTT; turn .srt (or anything ffmpeg reads) into it
+            let path = crate::api::files::file_path(&state, &sid);
+            let bytes = tokio::fs::read(&path).await.unwrap_or_default();
+            let vtt = if bytes.starts_with(b"WEBVTT") || bytes.starts_with(b"\xEF\xBB\xBFWEBVTT") {
+                sid.clone()
+            } else {
+                let o = tokio::process::Command::new("ffmpeg").args(["-hide_banner", "-loglevel", "error", "-i"]).arg(&path).args(["-f", "webvtt", "-"]).output().await.map_err(|_| AppError::bad("couldn't read those subtitles"))?;
+                if !o.status.success() || o.stdout.len() < 7 {
+                    return Err(AppError::bad(format!("couldn't read those subtitles ({})", f.filename)));
+                }
+                crate::api::files::store_bytes(&state, &auth.id, "subtitles.vtt", "text/vtt", &o.stdout).await.map_err(|e| AppError::bad(e.to_string()))?
+            };
+            sqlx::query("UPDATE watch_library SET subs_file_id = ? WHERE file_id = ?").bind(&vtt).bind(&fid).execute(&state.db).await?;
+        }
+    }
+    Ok(Json(json!({ "ok": true })))
+}
+
+/// May this person see a library movie's poster or subtitles?
+pub async fn library_extra_ok(state: &Shared, file_id: &str) -> bool {
+    state.s().watch_library
+        && sqlx::query_scalar::<_, i64>("SELECT 1 FROM watch_library WHERE poster_file_id = ? OR subs_file_id = ?").bind(file_id).bind(file_id).fetch_optional(&state.db).await.ok().flatten().is_some()
 }
 
 /// DELETE /api/watch/library/{file_id}
