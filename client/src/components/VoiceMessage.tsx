@@ -1,8 +1,8 @@
 // A voice message in the chat (play, its text version, urgent + "Got it"), the recorder in the
 // composer, and the full-screen alert for urgent ones.
 import { useEffect, useRef, useState } from "react";
-import { api, media } from "../api";
-import { ackVoice, beep, fmtMs, saveRecording, sayGreeting, sendVoice, stopSaying, startRecording, type Recording, type VmTarget } from "../voicemsg";
+import { api, media, session, upload } from "../api";
+import { ackVoice, beep, fmtMs, greetingOf, playAudio, playGreeting, saveRecording, sendVoice, stopSaying, startRecording, type Greeting, type Recording, type VmTarget } from "../voicemsg";
 import { homeOf, selectChannel, useStore } from "../store";
 import { toast } from "../ui";
 import type { Message } from "../types";
@@ -238,7 +238,10 @@ export function VoicemailRecorder({ targets, about, canUrgent, onDone }: { targe
   const [url, setUrl] = useState<string | null>(null);
   const names = targets.map((t) => t.name);
   const who = names.length === 1 ? names[0] : names.length === 2 ? names.join(" and ") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
-  const greeting = `${who} ${names.length === 1 ? "can't" : "couldn't"} answer right now. Leave a message after the tone.`;
+  const fallback = `${who} ${names.length === 1 ? "can't" : "couldn't"} answer right now. Leave a message after the tone.`;
+  // one person: their own greeting (recorded, or said by the server's voice)
+  const [greet, setGreet] = useState<Greeting | null>(null);
+  const greeting = greet?.kind === "recorded" ? `${names[0]}'s greeting` : greet?.text || fallback;
   const stop = async () => {
     const r = rec.current;
     rec.current = null;
@@ -256,7 +259,8 @@ export function VoicemailRecorder({ targets, about, canUrgent, onDone }: { targe
     let alive = true;
     setStep("greeting");
     setResult(null);
-    (take === 0 ? sayGreeting(greeting) : Promise.resolve())
+    const one = targets.length === 1 ? targets[0].userId : undefined;
+    (take === 0 ? (one ? greetingOf(one) : Promise.resolve(null)).then((g) => (alive && setGreet(g), alive ? playGreeting(g, fallback) : undefined)) : Promise.resolve())
       .then(async () => {
         if (alive) await beep();
       })
@@ -455,4 +459,207 @@ export function refreshVoicemailCount() {
     .then((l: Message[]) => useVoicemailCount.setState({ n: l.filter((m) => !m.voice?.acks.includes(me || "")).length }))
     .catch(() => {});
   window.dispatchEvent(new Event("llamble-voicemail"));
+}
+
+// ---- Settings → Voicemail: what callers hear before the tone ----
+
+type MyGreeting = { kind: "default" | "voice" | "recorded"; text: string; voice: number; file_id: string | null; voices_ready: boolean; voices: { sid: number; label: string }[] };
+
+export function GreetingSettings() {
+  const me = useStore((s) => s.me)!;
+  const [g, setG] = useState<MyGreeting | null>(null);
+  const [kind, setKind] = useState<MyGreeting["kind"]>("default");
+  const [text, setText] = useState("");
+  const [voice, setVoice] = useState(0);
+  const [busy, setBusy] = useState("");
+  // recording a new greeting
+  const rec = useRef<Recording | null>(null);
+  const [recMs, setRecMs] = useState(0);
+  const [take, setTake] = useState<{ audio: Blob; ms: number; url: string } | null>(null);
+  const [recording, setRecording] = useState(false);
+  const name = me.display_name || me.username;
+  const defaultText = `${name} can't answer right now. Leave a message after the tone.`;
+  useEffect(() => {
+    api("/api/users/@me/greeting").then((r: MyGreeting) => {
+      setG(r);
+      setKind(r.kind);
+      setText(r.text || `Hi, it's ${name}. I can't answer right now. Leave a message after the tone.`);
+      setVoice(r.voice);
+    });
+    return () => {
+      rec.current?.cancel();
+      stopSaying();
+    };
+  }, []);
+  useEffect(() => {
+    if (!recording) return;
+    const t = setInterval(() => rec.current && setRecMs(rec.current.ms()), 200);
+    return () => clearInterval(t);
+  }, [recording]);
+  useEffect(() => () => {
+    if (take) URL.revokeObjectURL(take.url);
+  }, [take]);
+  const run = async (what: string, f: () => Promise<any>) => {
+    setBusy(what);
+    try {
+      await f();
+    } catch (e: any) {
+      toast(e.message, "error");
+    } finally {
+      setBusy("");
+    }
+  };
+  const save = (body: any) =>
+    run("save", async () => {
+      const r = await api("/api/users/@me/greeting", { method: "PUT", body });
+      setG(r);
+      setKind(r.kind);
+      setTake(null);
+      toast("Greeting saved");
+    });
+  const hearWords = () =>
+    run("hear", async () => {
+      const r = await fetch(`${session.server}/api/users/@me/greeting/preview`, {
+        method: "POST",
+        headers: { Authorization: "Bearer " + session.token, "content-type": "application/json" },
+        body: JSON.stringify({ text, voice }),
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "couldn't make speech");
+      const u = URL.createObjectURL(await r.blob());
+      await playAudio(u);
+      URL.revokeObjectURL(u);
+    });
+  const hearCurrent = () =>
+    run("current", async () => {
+      const cur = await greetingOf(me.id);
+      await playGreeting(cur, defaultText);
+    });
+  const startRec = () =>
+    run("rec", async () => {
+      setTake(null);
+      const r = await startRecording(() => stopRec());
+      rec.current = r;
+      setRecMs(0);
+      setRecording(true);
+      // a greeting is short: stop at one minute
+      setTimeout(() => rec.current === r && stopRec(), 60_000);
+    });
+  const stopRec = async () => {
+    const r = rec.current;
+    rec.current = null;
+    setRecording(false);
+    const out = r ? await r.stop() : null;
+    if (!out) return toast("Too short. Try again.");
+    setTake({ ...out, url: URL.createObjectURL(out.audio) });
+  };
+  const saveRecorded = () =>
+    run("save", async () => {
+      const ext = take!.audio.type.includes("wav") ? "wav" : take!.audio.type.includes("ogg") ? "ogg" : take!.audio.type.includes("mp4") ? "m4a" : "webm";
+      const f = await upload(take!.audio, `Voicemail greeting.${ext}`);
+      const r = await api("/api/users/@me/greeting", { method: "PUT", body: { kind: "recorded", file_id: f.id } });
+      setG(r);
+      setKind("recorded");
+      setTake(null);
+      toast("Greeting saved");
+    });
+  if (!g) return <div />;
+  return (
+    <div>
+      <h2>Voicemail greeting</h2>
+      <p className="muted small">What people hear before the tone when you don't answer a call.</p>
+      <button className="btn" disabled={!!busy} onClick={hearCurrent}>
+        <Icon name="play" size={14} /> Hear what callers hear
+      </button>
+      <div className="join-modes greet-modes">
+        <label className={"join-mode" + (kind === "default" ? " on" : "")}>
+          <input type="radio" checked={kind === "default"} onChange={() => (setKind("default"), g.kind !== "default" && save({ kind: "default" }))} />
+          <span>
+            <span className="bold">Standard</span>
+            <span className="muted small"> “{defaultText}”</span>
+          </span>
+        </label>
+        <label className={"join-mode" + (kind === "voice" ? " on" : "")}>
+          <input type="radio" checked={kind === "voice"} onChange={() => setKind("voice")} />
+          <span>
+            <span className="bold">Your words, read by a voice</span>
+            <span className="muted small"> Write what it says and pick a voice.</span>
+          </span>
+        </label>
+        <label className={"join-mode" + (kind === "recorded" ? " on" : "")}>
+          <input type="radio" checked={kind === "recorded"} onChange={() => setKind("recorded")} />
+          <span>
+            <span className="bold">Record your own</span>
+            <span className="muted small"> In your own voice, up to a minute.</span>
+          </span>
+        </label>
+      </div>
+      {kind === "voice" &&
+        (g.voices_ready ? (
+          <div className="greet-box">
+            <label>
+              What it says
+              <textarea rows={3} maxLength={300} value={text} onChange={(e) => setText(e.target.value)} />
+            </label>
+            <label>
+              Voice
+              <select value={voice} onChange={(e) => setVoice(Number(e.target.value))}>
+                {g.voices.map((v) => (
+                  <option key={v.sid} value={v.sid}>
+                    {v.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="row gap">
+              <button className="btn" disabled={!!busy || !text.trim()} onClick={hearWords}>
+                {busy === "hear" ? "Making it…" : "Hear it"}
+              </button>
+              <button className="btn primary" disabled={!!busy || !text.trim()} onClick={() => save({ kind: "voice", text, voice })}>
+                Save
+              </button>
+            </div>
+          </div>
+        ) : (
+          <p className="muted small greet-box">This Llamble's voices aren't downloaded yet. An admin turns them on in Settings → Voice AI. Until then, callers' devices read the standard greeting.</p>
+        ))}
+      {kind === "recorded" && (
+        <div className="greet-box">
+          {g.file_id && !take && !recording && (
+            <div className="row gap">
+              <span className="muted small grow">{g.kind === "recorded" ? "Your recorded greeting" : "The greeting you recorded before"}</span>
+              <audio controls src={media(`/api/files/${g.file_id}`)} />
+              {g.kind !== "recorded" && (
+                <button className="btn primary" disabled={!!busy} onClick={() => save({ kind: "recorded", file_id: g.file_id })}>
+                  Use this one
+                </button>
+              )}
+            </div>
+          )}
+          {recording ? (
+            <div className="vrec">
+              <span className="vrec-dot" />
+              <span className="grow">Recording {fmtMs(recMs)}</span>
+              <button className="btn primary" onClick={stopRec}>
+                Stop
+              </button>
+            </div>
+          ) : take ? (
+            <div className="row gap">
+              <audio controls src={take.url} />
+              <button className="btn" disabled={!!busy} onClick={startRec}>
+                Record again
+              </button>
+              <button className="btn primary" disabled={!!busy} onClick={saveRecorded}>
+                Save
+              </button>
+            </div>
+          ) : (
+            <button className="btn" disabled={!!busy} onClick={startRec}>
+              <Icon name="mic" size={14} /> {g.file_id ? "Record a new one" : "Record"}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }

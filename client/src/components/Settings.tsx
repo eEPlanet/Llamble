@@ -26,6 +26,7 @@ import { PicturesAdmin } from "./PicturesAdmin";
 import { BotToolsAdmin, GuildVoiceListen, MicTest, VoiceAiAdmin } from "./VoiceAi";
 import { WatchAdmin } from "./Watch";
 import { JOIN_MODES } from "./Discover";
+import { GreetingSettings } from "./VoiceMessage";
 import { Recordings } from "./Library";
 import { ACCENTS, DEFAULT_ACCENT, THEMES, applyAccent, resetAccent, applyTheme, currentAccent, currentTheme, customAccent, customBase, setCustomAccent, setCustomBase, themeFromBase } from "../theme";
 import { androidListener, androidSend, isAndroidApp } from "../android";
@@ -600,6 +601,7 @@ export function UserSettings({ tab: initial }: { tab?: string }) {
         { id: "voice", label: "Voice & Video" },
         { id: "ai", label: "Lend My GPU", hidden: !window.llambleNative },
         { id: "notifications", label: "Notifications" },
+        { id: "voicemail", label: "Voicemail" },
         { id: "schedule", label: "Schedule & alarms" },
         { id: "overlay", label: "Overlay & replay" },
         { id: "games", label: "Games", hidden: !window.llambleNative?.games },
@@ -623,6 +625,7 @@ export function UserSettings({ tab: initial }: { tab?: string }) {
       {tab === "voice" && <VoiceSettings />}
       {tab === "ai" && <AiSettings />}
       {tab === "notifications" && <NotifSettings />}
+      {tab === "voicemail" && <GreetingSettings />}
       {tab === "schedule" && <ScheduleSettings />}
       {tab === "overlay" && <OverlaySettings />}
       {tab === "games" && <GamesSettings />}

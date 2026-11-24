@@ -210,9 +210,65 @@ export function beep(): Promise<void> {
   });
 }
 
+let playing: HTMLAudioElement | null = null;
+
 export function stopSaying() {
   if (isAndroidApp) androidSend("say-stop");
   (window as any).speechSynthesis?.cancel?.();
+  if (playing) {
+    playing.pause();
+    playing = null;
+  }
+}
+
+/** Play an audio file to the end (a greeting); never waits forever. */
+export function playAudio(url: string, maxMs = 60_000): Promise<void> {
+  return new Promise((done) => {
+    const a = new Audio(url);
+    playing = a;
+    let t = 0;
+    const finish = () => {
+      clearTimeout(t);
+      if (playing === a) playing = null;
+      done();
+    };
+    a.onended = finish;
+    a.onerror = finish;
+    t = window.setTimeout(() => (a.pause(), finish()), maxMs);
+    a.play().catch(finish);
+  });
+}
+
+export interface Greeting {
+  kind: "default" | "voice" | "recorded";
+  text: string;
+  /** a spoken or recorded greeting to play; none = the device says the text */
+  file_id: string | null;
+}
+
+/** Someone's voicemail greeting (null if it can't be had quickly: the device says the default). */
+export async function greetingOf(userId: string): Promise<Greeting | null> {
+  try {
+    return await Promise.race([api(`/api/users/${userId}/greeting`), new Promise<null>((r) => setTimeout(() => r(null), 5000))]);
+  } catch {
+    return null;
+  }
+}
+
+/** Before the tone: their recorded or server-voice greeting, else the device says the words. */
+export async function playGreeting(g: Greeting | null, fallbackText: string): Promise<void> {
+  if (g?.file_id) {
+    // a file that won't play still falls back to the words
+    const ok = await new Promise<boolean>((done) => {
+      const a = new Audio(media(`/api/files/${g.file_id}`));
+      a.oncanplay = () => done(true);
+      a.onerror = () => done(false);
+      setTimeout(() => done(false), 5000);
+      a.load();
+    });
+    if (ok) return playAudio(media(`/api/files/${g.file_id}`));
+  }
+  return sayGreeting(g?.text || fallbackText);
 }
 
 /** Say the greeting out loud where the device can (else it's only shown on screen). */
@@ -253,6 +309,8 @@ export interface VmTarget {
   channelId: string;
   /** who it's for, for the greeting */
   name: string;
+  /** the person (one-to-one): their own greeting plays */
+  userId?: string;
 }
 
 /** Save a voice message or voicemail as an MP3: in the Android app into Downloads, elsewhere

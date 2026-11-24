@@ -564,7 +564,7 @@ function NoAnswer() {
   // like a phone: nobody picked up, so it goes straight to their voicemail (greeting said out
   // loud, then the tone); "Don't send" backs out
   useEffect(() => {
-    if (na && ch && !recording) setRecording([{ channelId: ch.id, name: ch.kind === "party" ? `Everyone in ${ch.name}` : nameOfIn(ch) }]);
+    if (na && ch && !recording) setRecording([{ channelId: ch.id, name: ch.kind === "party" ? `Everyone in ${ch.name}` : nameOfIn(ch), userId: ch.kind === "party" ? undefined : ch.recipients?.find((r) => r.id !== me)?.id }]);
   }, [na?.channel_id]);
   if (!(na || ms) || !ch) return null;
   const close = () => (setRecording(null), useCalls.setState({ noAnswer: null, missedSome: null }));
@@ -582,7 +582,8 @@ function NoAnswer() {
       : `${ch.kind === "party" ? "Nobody in " + ch.name : nameOf(ch.recipients!.find((r) => r.id !== me)!.id)} answered`.replace(/ answered$/, ch.kind === "party" ? " answered" : " didn't answer");
   const start = async () => {
     if (!missing) {
-      setRecording([{ channelId: ch.id, name: ch.kind === "party" ? `Everyone in ${ch.name}` : nameOf(ch.recipients!.find((r) => r.id !== me)!.id) }]);
+      const other = ch.kind === "party" ? undefined : ch.recipients!.find((r) => r.id !== me)!.id;
+      setRecording([{ channelId: ch.id, name: ch.kind === "party" ? `Everyone in ${ch.name}` : nameOf(other!), userId: other }]);
       return;
     }
     setBusy(true);
@@ -590,7 +591,7 @@ function NoAnswer() {
       const t: VmTarget[] = [];
       for (const id of missing) {
         const dm = await api("/api/users/@me/channels", { body: { recipient_id: id } });
-        t.push({ channelId: dm.id, name: nameOf(id) });
+        t.push({ channelId: dm.id, name: nameOf(id), userId: id });
       }
       setRecording(t);
     } catch (e: any) {

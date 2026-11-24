@@ -6,6 +6,7 @@ pub mod gifs;
 pub mod highlights;
 pub mod invite_cards;
 pub mod discover;
+pub mod greeting;
 pub mod jellyfin;
 pub mod watch;
 pub mod notifications;
@@ -215,6 +216,9 @@ pub fn router(state: Shared) -> Router<Shared> {
         .route("/api/guilds/{gid}/members/{uid}/messages", delete(messages::delete_user_messages))
         .route("/api/admin/invites", post(guilds::create_instance_invite))
         .route("/api/invites/llamble", post(discover::create_llamble_invite))
+        .route("/api/users/@me/greeting", get(greeting::my_greeting).put(greeting::set_greeting))
+        .route("/api/users/@me/greeting/preview", post(greeting::preview))
+        .route("/api/users/{uid}/greeting", get(greeting::get_greeting))
         .route("/api/discover", get(discover::list))
         .route("/api/discover/{gid}", get(discover::preview))
         .route("/api/discover/{gid}/channels/{cid}/messages", get(discover::preview_messages))

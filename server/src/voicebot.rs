@@ -149,6 +149,11 @@ fn tts_ready(state: &Shared) -> bool {
     tts_folder(state).join("model.int8.onnx").exists()
 }
 
+/// The voices are downloaded (for voicemail greetings and the like).
+pub fn tts_available(state: &Shared) -> bool {
+    tts_ready(state)
+}
+
 #[derive(Serialize, Clone, Default)]
 pub struct Status {
     /// idle | downloading | ready | error
