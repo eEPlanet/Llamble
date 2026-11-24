@@ -11,7 +11,7 @@
 //! streamer's live video (device).
 use crate::error::{new_id, now_ms, ApiResult, AppError};
 use crate::models::{load_channel, Channel};
-use crate::perms::{self, require_channel};
+use crate::perms;
 use crate::state::{AuthUser, Shared};
 use axum::extract::{Path, State};
 use axum::Json;
@@ -87,7 +87,13 @@ async fn watch_channel(state: &Shared, cid: &str, uid: &str) -> ApiResult<(Chann
     if ch.kind != "watch" {
         return Err(AppError::bad("not a Watch Party space"));
     }
-    let p = require_channel(&state.db, &ch, uid, perms::VIEW).await?;
+    let p = perms::channel_perms(&state.db, &ch, uid).await?;
+    if p & perms::VIEW == 0 {
+        return Err(AppError::not_found());
+    }
+    if !perms::open_to(&ch, p) && !in_room(state, cid, uid) {
+        return Err(AppError::forbidden_msg("This space is locked right now."));
+    }
     if !state.s().watch_party {
         return Err(AppError::forbidden_msg("Watch Party is turned off on this Llamble"));
     }

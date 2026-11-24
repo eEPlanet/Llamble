@@ -4,11 +4,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { create } from "zustand";
 import { Track } from "livekit-client";
 import { api, media, upload } from "../api";
-import { can, useStore } from "../store";
+import { can, selectChannel, useStore } from "../store";
 import { P } from "../types";
 import type { Channel } from "../types";
 import { toast } from "../ui";
 import { joinVoice, leaveVoice, needVideo, participants, setPeopleMuted, useVoice } from "../voice";
+import { goOnline } from "../viewing";
 import { canStreamFromDevice, loadWatch, startDeviceStream, stopDeviceStream, targetMs, useMyStream, useWatch, watchAction, type WatchItem, type WatchState } from "../watch";
 import { ChatView } from "./ChatView";
 import { Avatar } from "./common";
@@ -53,7 +54,7 @@ export function WatchView({ channel }: { channel: Channel }) {
                 </span>
               ))}
           </span>
-          <LockButton channel={channel} />
+          {channel.locked && <span className="muted small" title="Locked: only staff can come in">🔒 Locked</span>}
           {inRoom ? (
             <button className="btn small red" onClick={() => leaveVoice()}>
               Leave
@@ -199,21 +200,6 @@ function TalkRequests({ cid, st, mayRun }: { cid: string; st: WatchState; mayRun
         </button>
       )}
     </>
-  );
-}
-
-/** Staff can lock a room on the fly: nobody new comes in. */
-export function LockButton({ channel }: { channel: Channel }) {
-  const gid = channel.guild_id;
-  if (!gid || !(can(gid, P.LOCK_SPACES) || can(gid, P.MANAGE_CHANNELS))) return channel.locked ? <span className="muted small">🔒 Locked</span> : null;
-  return (
-    <button
-      className={"btn small" + (channel.locked ? " primary" : "")}
-      title={channel.locked ? "Unlock: people can come in again" : "Lock: nobody new can come in (people inside stay)"}
-      onClick={() => api(`/api/channels/${channel.id}/lock`, { body: { locked: !channel.locked } }).catch((e) => toast(e.message, "error"))}
-    >
-      {channel.locked ? "🔒 Locked" : "🔓 Lock"}
-    </button>
   );
 }
 
@@ -650,5 +636,35 @@ export function WatchAdmin({ f, set }: { f: any; set: (k: string, v: any) => voi
         </div>
       )}
     </>
+  );
+}
+
+/** What people see when they open a locked space. */
+export function LockedSpace({ channel }: { channel: Channel }) {
+  return (
+    <div className="watch-idle locked-space">
+      <div className="watch-idle-icon">🔒</div>
+      <h2>{channel.name} is locked</h2>
+      <p className="muted">The moderators have closed it for now. It'll open again when they unlock it.</p>
+    </div>
+  );
+}
+
+/** Opening a chat while invisible: chats are live, so going in shows you as Online. */
+export function InvisibleGate({ channel }: { channel: Channel }) {
+  return (
+    <div className="watch-idle locked-space">
+      <div className="watch-idle-icon">⚪</div>
+      <h2>You're invisible</h2>
+      <p className="muted">Chats are live: opening #{channel.name} shows you as Online, and people can see you're here.</p>
+      <div className="row gap">
+        <button className="btn primary" onClick={() => goOnline()}>
+          Go online and open it
+        </button>
+        <button className="btn" onClick={() => selectChannel(channel.guild_id!, null)}>
+          Not now
+        </button>
+      </div>
+    </div>
   );
 }

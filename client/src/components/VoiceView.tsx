@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Track, type Participant } from "livekit-client";
 import { memberName, useStore } from "../store";
-import { LockButton } from "./Watch";
 import type { Channel } from "../types";
 import {
   closePopout,
@@ -133,7 +132,7 @@ export function VoiceView({ channel }: { channel: Channel }) {
       <header className="chat-header">
         <Icon name="speaker" size={22} className="muted" />
         <span className="chat-title">{channel.name}</span>
-        <LockButton channel={channel} />
+        {channel.locked && <span className="muted small" title="Locked: only staff can come in">🔒 Locked</span>}
         <span className={"voice-label " + v.status}>
           {v.status === "connected"
             ? "Connected"

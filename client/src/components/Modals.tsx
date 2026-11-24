@@ -265,6 +265,19 @@ function EditChannel({ channelId }: { channelId: string }) {
         Position <span className="muted small">(lower shows first)</span>
         <input type="number" value={position} onChange={(e) => setPosition(Number(e.target.value))} />
       </label>
+      {ch.kind !== "category" && ch.guild_id && (can(ch.guild_id, P.LOCK_SPACES) || can(ch.guild_id, P.MANAGE_CHANNELS)) && (
+        <label className="perm-row">
+          <span className="grow">
+            <b>Locked</b>
+            <div className="muted small">Only staff can go in (to clean up, say). People already in a voice or Watch Party room stay. Takes effect right away.</div>
+          </span>
+          <input
+            type="checkbox"
+            checked={!!ch.locked}
+            onChange={(e) => api(`/api/channels/${ch.id}/lock`, { body: { locked: e.target.checked } }).catch((err) => toast(err.message, "error"))}
+          />
+        </label>
+      )}
       {error && <div className="form-error">{error}</div>}
       <div className="modal-foot">
         <button type="button" className="btn link" onClick={closeModal}>

@@ -1607,3 +1607,4 @@ body.pop-body > .pop { height: 100vh; }
 .watch-held { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px; background: color-mix(in srgb, var(--accent, #4f8cff) 12%, transparent); font-size: 13px; }
 .watch-ask { display: inline-flex; align-items: center; gap: 6px; }
 .voice-panel-btns .btn.small { flex: 1; }
+.here-tag { padding: 0 8px 4px 40px; font-size: 12px; }

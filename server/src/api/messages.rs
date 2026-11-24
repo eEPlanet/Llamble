@@ -17,8 +17,10 @@ pub struct ListQ {
 
 pub async fn list_messages(State(state): State<Shared>, auth: AuthUser, Path(cid): Path<String>, Query(q): Query<ListQ>) -> ApiResult<Json<Vec<Message>>> {
     let ch = load_channel(&state.db, &cid).await?;
-    if require_channel(&state.db, &ch, &auth.id, perms::VIEW).await.is_err() && !crate::kids::guardian_can_read(&state, &ch, &auth.id).await {
-        return Err(AppError::not_found());
+    if let Err(e) = require_channel(&state.db, &ch, &auth.id, perms::VIEW).await {
+        if !crate::kids::guardian_can_read(&state, &ch, &auth.id).await {
+            return Err(e); // (a locked space says so)
+        }
     }
     let limit = q.limit.unwrap_or(50).clamp(1, 100);
     let rows = if let Some(after) = q.after {

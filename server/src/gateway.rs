@@ -71,6 +71,8 @@ async fn ready_payload(state: &Shared, auth: &AuthUser) -> anyhow::Result<Value>
         "read_states": reads.into_iter().map(|(c, m)| json!({ "channel_id": c, "last_read_id": m })).collect::<Vec<_>>(),
         "presences": presences,
         "my_status": { "status": status_of(state, &auth.id), "hide_activity": hidden(&auth.id) },
+        // who's reading which chats (the app shows only the chats this person can see)
+        "viewers": visible_viewers(state, &auth.id).await,
         "voice_states": voice,
         "shows": crate::shows::active(state).await,
         "config": {
@@ -124,6 +126,92 @@ async fn set_game(state: &Shared, uid: &str, game: Option<String>) {
 
 fn status_of(_state: &Shared, uid: &str) -> String {
     STATUSES.get(uid).map(|s| s.clone()).unwrap_or_else(|| "online".into())
+}
+
+/// Which chat each connection has open right now (connection → (user, space)). Shown in the
+/// sidebar as who's "here" in a chat. Rooms (voice / Watch Party) use voice states instead.
+static VIEWING: once_cell::sync::Lazy<dashmap::DashMap<u64, (String, String)>> = once_cell::sync::Lazy::new(Default::default);
+
+/// Everyone shown as reading each chat (hidden and invisible people are left out).
+fn viewers_json(uid_filter: impl Fn(&str) -> bool) -> Vec<serde_json::Value> {
+    let mut seen = std::collections::BTreeSet::new();
+    VIEWING
+        .iter()
+        .filter(|e| uid_filter(&e.value().0))
+        .filter_map(|e| {
+            let (u, c) = e.value().clone();
+            seen.insert((u.clone(), c.clone())).then(|| json!({ "user_id": u, "channel_id": c }))
+        })
+        .collect()
+}
+
+/// The reading list, only for chats this person can see.
+async fn visible_viewers(state: &Shared, me: &str) -> Vec<serde_json::Value> {
+    let mut out = vec![];
+    let mut ok_cache: std::collections::HashMap<String, bool> = Default::default();
+    for v in viewers_json(shown_reading) {
+        let c = v["channel_id"].as_str().unwrap_or_default().to_string();
+        let ok = match ok_cache.get(&c) {
+            Some(b) => *b,
+            None => {
+                let b = match crate::models::load_channel(&state.db, &c).await {
+                    Ok(ch) => crate::perms::require_channel(&state.db, &ch, me, crate::perms::VIEW).await.is_ok(),
+                    Err(_) => false,
+                };
+                ok_cache.insert(c.clone(), b);
+                b
+            }
+        };
+        if ok {
+            out.push(v);
+        }
+    }
+    out
+}
+
+/// Chat is live, so "Hide what I'm doing" doesn't hide you there (no lurking in ambush).
+/// Invisible people (who look offline) aren't listed.
+fn shown_reading(uid: &str) -> bool {
+    STATUSES.get(uid).map(|s| s.as_str() != "invisible").unwrap_or(true)
+}
+
+/// Tell the people who can see a chat who is reading it now.
+async fn announce_viewers(state: &Shared, cid: &str) {
+    let Ok(ch) = crate::models::load_channel(&state.db, cid).await else { return };
+    let users: Vec<String> = {
+        let mut v: Vec<String> = VIEWING.iter().filter(|e| e.value().1 == cid && shown_reading(&e.value().0)).map(|e| e.value().0.clone()).collect();
+        v.sort();
+        v.dedup();
+        v
+    };
+    state.emit_channel(&ch, "VIEWERS_UPDATE", &json!({ "channel_id": cid, "user_ids": users })).await;
+}
+
+/// A connection opened a chat (or closed it: None).
+async fn set_viewing(state: &Shared, conn_id: u64, uid: &str, cid: Option<String>) {
+    let before = VIEWING.get(&conn_id).map(|e| e.value().1.clone());
+    if before == cid {
+        return;
+    }
+    match &cid {
+        Some(c) => {
+            VIEWING.insert(conn_id, (uid.to_string(), c.clone()));
+        }
+        None => {
+            VIEWING.remove(&conn_id);
+        }
+    }
+    for c in [before, cid].into_iter().flatten() {
+        announce_viewers(state, &c).await;
+    }
+}
+
+/// Someone's status changed: refresh the chats they're reading (they may now be hidden).
+async fn refresh_viewing_of(state: &Shared, uid: &str) {
+    let chats: Vec<String> = VIEWING.iter().filter(|e| e.value().0 == uid).map(|e| e.value().1.clone()).collect();
+    for c in chats {
+        announce_viewers(state, &c).await;
+    }
 }
 
 /// People who've turned on "Hide what I'm doing".
@@ -226,6 +314,7 @@ async fn session(state: Shared, auth: AuthUser, sock: WebSocket) {
                                     changed = true;
                                 }
                                 if changed {
+                                    refresh_viewing_of(&state, &auth.id).await;
                                     if status_of(&state, &auth.id) == "invisible" || hidden(&auth.id) {
                                         set_game(&state, &auth.id, None).await;
                                     }
@@ -233,6 +322,20 @@ async fn session(state: Shared, auth: AuthUser, sock: WebSocket) {
                                     state.emit_related(&auth.id, "PRESENCE_UPDATE", &json!({ "user_id": auth.id, "status": shown, "hidden": hidden(&auth.id) })).await;
                                     // the person's other devices pick up the change too
                                     state.hub.send_user(&auth.id, "MY_STATUS", &json!({ "status": status_of(&state, &auth.id), "hide_activity": hidden(&auth.id) }));
+                                }
+                            }
+                            Some("viewing") => {
+                                // the chat this device has open (and is looking at), or null
+                                let cid = v["channel_id"].as_str().map(str::to_string);
+                                let ok = match &cid {
+                                    Some(c) => match crate::models::load_channel(&state.db, c).await {
+                                        Ok(ch) => ch.guild_id.is_some() && ch.kind == "text" && crate::perms::require_channel(&state.db, &ch, &auth.id, crate::perms::VIEW).await.is_ok(),
+                                        Err(_) => false,
+                                    },
+                                    None => true,
+                                };
+                                if ok {
+                                    set_viewing(&state, conn_id, &auth.id, cid).await;
                                 }
                             }
                             Some("activity") => {
@@ -291,6 +394,7 @@ async fn session(state: Shared, auth: AuthUser, sock: WebSocket) {
     }
 
     crate::bot::worker_gone(&state, conn_id);
+    set_viewing(&state, conn_id, &auth.id, None).await;
     if state.hub.unregister(&auth.id, conn_id) {
         // grace period so a quick reconnect doesn't flap presence / drop voice
         let st = state.clone();

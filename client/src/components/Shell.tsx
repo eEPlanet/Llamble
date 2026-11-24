@@ -7,7 +7,7 @@ import { usePeopleName } from "../store";
 import { can, currentChannelId, homeOf, isMessages, isUnread, onEvent, openFriend, openGuildView, openHome, openMessages, selectChannel, showMobileNav, useStore } from "../store";
 import { useIsPhone } from "../phone";
 import { Board, useUnreadNotes } from "./Home";
-import { WatchView } from "./Watch";
+import { InvisibleGate, LockedSpace, WatchView } from "./Watch";
 import { useUnreadNotices } from "../notifications";
 import { P } from "../types";
 import { copy, openMenu, openModal, toast, useUI } from "../ui";
@@ -32,6 +32,10 @@ export function Shell() {
   const conn = useStore((s) => s.conn);
   const channelId = useStore((s) => currentChannelId(s));
   const channel = useStore((s) => (channelId ? s.channels[channelId] : undefined));
+  // a locked space: only staff can open it (people already in its room stay)
+  const inItsRoom = useVoice((v) => !!channel && v.channelId === channel.id);
+  const invisibleGate = useStore((s) => s.myStatus.status === "invisible") && channel?.kind === "text" && !!channel.guild_id;
+  const lockedOut = !!channel?.locked && !!channel.guild_id && !inItsRoom && !can(channel.guild_id, P.LOCK_SPACES) && !can(channel.guild_id, P.MANAGE_CHANNELS);
   const memberListOpen = useStore((s) => s.memberListOpen);
   const selectedGuild = useStore((s) => s.selectedGuild);
   const guildsForBack = useStore((s) => s.guilds);
@@ -123,7 +127,11 @@ export function Shell() {
           ) : guildView ? (
             <Board key={selectedGuild} scope={selectedGuild} />
           ) : channel ? (
-            channel.kind === "voice" ? (
+            lockedOut ? (
+              <LockedSpace channel={channel} />
+            ) : invisibleGate ? (
+              <InvisibleGate channel={channel} />
+            ) : channel.kind === "voice" ? (
               <VoiceView channel={channel} />
             ) : channel.kind === "watch" ? (
               <WatchView key={channel.id} channel={channel} />
