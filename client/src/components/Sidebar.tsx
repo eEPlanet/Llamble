@@ -112,6 +112,7 @@ function ChannelList({ guildId }: { guildId: string }) {
   const manage = can(guildId, P.MANAGE_CHANNELS);
   const [over, setOver] = useState<string | null>(null);
   const voiceIn = useVoice((v) => v.channelId);
+  const openChat = useStore((s) => currentChannelId(s));
 
   // drop targets: a type heading = out of any group; a group = into it (or before it, for a group)
   const dropProps = (target: string, groupId: string | null) =>
@@ -136,10 +137,12 @@ function ChannelList({ guildId }: { guildId: string }) {
       : {};
 
   const section = (key: string, label: string, kids: Channel[], group: Channel | null) => {
-    const isCollapsed = collapsed[key];
-    // collapsed hides everything under it; the heading says if something's new or you're in there
+    // a group with a space you're in (a room you've joined, or the chat you have open, where
+    // your name shows) can't be collapsed: no arrow, and it stays open
+    const pinned = kids.some((c) => c.id === voiceIn || c.id === openChat);
+    const isCollapsed = !pinned && collapsed[key];
+    // collapsed hides everything under it; the heading shows a dot if something's new in there
     const newInside = isCollapsed && kids.some((c) => isUnread(c));
-    const inside = isCollapsed && kids.some((c) => c.id === voiceIn);
     return (
       <div key={key} className={"category" + (over === key ? " drop-over" : "")} {...dropProps(key, group?.id ?? null)}>
         <div
@@ -147,7 +150,7 @@ function ChannelList({ guildId }: { guildId: string }) {
           draggable={!!group && manage}
           onDragStart={() => group && (dragging = { id: group.id, group: true })}
           onDragEnd={() => (dragging = null)}
-          onClick={() => toggleCollapsed(key)}
+          onClick={() => !pinned && toggleCollapsed(key)}
           onContextMenu={(e) =>
             manage &&
             group &&
@@ -169,9 +172,8 @@ function ChannelList({ guildId }: { guildId: string }) {
             ])
           }
         >
-          <Icon name="chevron" size={12} className={isCollapsed ? "rot" : ""} />
+          {pinned ? <span className="cat-arrow-space" /> : <Icon name="chevron" size={12} className={isCollapsed ? "rot" : ""} />}
           <span>{label}</span>
-          {inside && <span className="cat-here" title="You're in a room in here">🔊</span>}
           {newInside && <span className="cat-new" title="Something new in here" />}
           {manage && group && (
             <button

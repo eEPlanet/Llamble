@@ -32,6 +32,13 @@ with sync_playwright() as p:
         pg.click(".spaces-head button"); pg.click("text=Add a Space"); pg.wait_for_timeout(300)
         pg.fill("input[placeholder='new-chat']", n); pg.click(".modal button:has-text('Create')"); pg.wait_for_timeout(800)
     assert heads(pg) == ["chat", "voice & video", "watch"], heads(pg)
+    # the group with the chat you have open can't collapse (no arrow); others can
+    assert head(pg, "Chat").locator("svg").count() == 0
+    head(pg, "Chat").click(); pg.wait_for_timeout(200)
+    assert "general" in under(pg, "Chat")
+    head(pg, "Watch").click(); pg.wait_for_timeout(200)
+    assert under(pg, "Watch") == []
+    head(pg, "Watch").click(); pg.wait_for_timeout(200)
     assert sorted(under(pg, "Chat")) == ["games", "general", "memes"], under(pg, "Chat")
     pg.screenshot(path=f"{OUT}/spaces-by-type.png")
     # make a group, move a chat and the voice room into it (Move to… and New group…)

@@ -321,7 +321,7 @@ h1.md-h { font-size: 24px; } h2.md-h { font-size: 20px; } h3.md-h { font-size: 1
 .image-grid.n2 { grid-template-columns: 1fr 1fr; }
 .image-grid.n3, .image-grid.n4 { grid-template-columns: 1fr 1fr; }
 .image-grid:not(.n1) .att-img { width: 100%; height: 200px; object-fit: cover; }
-.att-img { border-radius: 6px; cursor: zoom-in; max-width: 520px; max-height: 360px; display: block; background: var(--bg-1); }
+.att-img { border-radius: 6px; cursor: zoom-in; max-width: min(520px, 100%); max-height: 360px; display: block; background: var(--bg-1); }
 .att-video { border-radius: 6px; max-width: 560px; max-height: 400px; background: #000; display: block; }
 .att-audio { background: var(--bg-1); border: 1px solid var(--bg-0); border-radius: 6px; padding: 10px; width: 420px; max-width: 100%; }
 .att-audio audio { width: 100%; margin-top: 8px; }
@@ -1662,7 +1662,7 @@ body.pop-body > .pop { height: 100vh; }
 .category-head.custom { cursor: pointer; }
 .channel[draggable="true"] { cursor: pointer; }
 .chat-head-emoji { font-size: 18px; line-height: 1; }
-.cat-here { font-size: 11px; margin-left: 4px; }
+.cat-arrow-space { display: inline-block; width: 12px; }
 .cat-new { width: 7px; height: 7px; border-radius: 50%; background: var(--text-strong); margin-left: 6px; }
 .watch-chat { flex-direction: column; }
 .watch-tabs { display: flex; gap: 4px; padding: 6px 8px; border-bottom: 1px solid var(--bg-3); flex: none; }

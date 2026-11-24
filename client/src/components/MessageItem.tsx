@@ -271,7 +271,8 @@ function EditBox({ msg }: { msg: Message }) {
 function fit(w: number | null | undefined, h: number | null | undefined, maxW = 520, maxH = 360) {
   if (!w || !h) return {};
   const s = Math.min(1, maxW / w, maxH / h);
-  return { width: Math.round(w * s), height: Math.round(h * s) };
+  // keeps its shape when a narrow screen makes it smaller than this
+  return { width: Math.round(w * s), height: "auto", aspectRatio: `${w} / ${h}` };
 }
 
 function Attachments({ files }: { files: FileObj[] }) {

@@ -2,55 +2,65 @@
 
 <p align="center"><img src="docs/logo.jpg" width="420" alt="Llamble: Chat, Show & Voice Platform"></p>
 
-A self-hosted chat server for your clients: text, voice and video. Rust server on TrueNAS, Windows desktop app (Electron), voice/video/screen share through LiveKit (bundled), and an AI bot powered by llama.cpp.
+<p align="center"><b>Your own place to hang out.</b><br>Chat, voice, shows and more, on a server you run.<br>
+Run it on a NAS or a Windows PC. Everyone joins from Windows, Android, or any browser.<br>
+<a href="https://llamble.com">llamble.com</a> · <a href="https://github.com/eEPlanet/Llamble/releases/latest">Download</a></p>
+
+<p align="center"><img src="docs/screenshots/chat.webp" width="860" alt="A chat in Llamble: messages, a shared picture, reactions, and the space list"></p>
+
+<p align="center">
+<img src="docs/screenshots/home.webp" width="420" alt="Home board: who's around right now, notifications, news and notes">
+<img src="docs/screenshots/watch-party.webp" width="420" alt="A Watch Party room with its queue">
+</p>
+<p align="center">
+<img src="docs/screenshots/phone-spaces.webp" width="200" alt="Spaces on a phone">
+<img src="docs/screenshots/phone-chat.webp" width="200" alt="A chat on a phone">
+<img src="docs/screenshots/phone-home.webp" width="200" alt="Home on a phone">
+</p>
+
+## What it does
+
+**Talk**
+- **Servers made of spaces:** 💬 Chat, 🔊 Voice & Video and 🍿 Watch Party spaces sort themselves under their type. Staff can also make their own groups ("Gaming") and drag spaces into them.
+- **Chat:** replies, reactions, markdown, @mentions, GIFs, link previews, pictures and video, files, voice messages, search, unread markers, and who's reading the chat right now.
+- **Voice & video rooms and calls:** camera, screen sharing with sound, push-to-talk, noise suppression, per-person volume, "Mute people", and calls that ring like a phone.
+- **Voicemail:** missed calls go to voicemail, with your own recorded greeting or your own words read by a server voice. Urgent voice messages keep alerting until someone taps "Got it".
+- **Friends and parties:** friend lists with status and what people are playing, private notes, favorites, and parties (small groups with their own chat and voice).
+
+**Watch together**
+- **Watch Party rooms:** a shared player with a queue for YouTube, links and streams, an uploaded movie library, your own **Jellyfin** server, or a video from someone's device. It stays in sync for everyone, with voice and chat beside it.
+- Whoever queued something (or a Watch Party host) runs it; everyone else can vote to skip. Late joiners come in quietly and can ask to talk. Posters and subtitles included.
+
+**Find your people**
+- **Open servers:** a server can be Open, Look around then request, Request only, or Invite only. Open and listed ones show up in a searchable list (the binoculars), and requests go to that server's staff.
+- **Invites:** in-app invite cards, invite links, and "Invite someone to Llamble" for any member. Invites can make you friends with whoever joins.
+- **Home board:** who's in a room right now, notifications, news, notes and highlights from all your servers in one place.
+
+**Shows and recording**
+- Record a show from a voice room with a director's controls and layouts; record your screen or a game on your own graphics card; instant replay.
+
+**Optional AI, all on your server**
+- A chat assistant powered by llama.cpp (pick a model in the app). "Hey Llamble" in voice rooms, with speech-to-text and a natural voice, all running locally. Members can lend an idle gaming GPU. Off if you don't want it.
+
+**Families**
+- Kid accounts with parents who can read their chats, approve who they talk to and which servers they join, set quiet hours, and turn on kid-safe AI.
+
+**Your server, your rules**
+- Accounts are invite-only. Roles and permissions per server, lockable spaces, bans, auto-delete, and admin tools.
+- Reach it from anywhere with your own address (HTTPS set up for you), directly or through your own relay so your home IP stays private.
+- No ads, no tracking. Everything stays on your server.
 
 ```
 llamble/
-  server/        Rust (Axum + SQLite) — API, WebSocket gateway, files, link previews, GIF library, AI bot
-  client/        Electron + React desktop app (the same UI is also served as a web app by the server)
+  server/        Rust (Axum + SQLite): API, WebSocket gateway, files, voice and AI management
+  client/        React app: the Windows app (Electron) and the web app the server serves
+  android/       The Android app
+  server-app/    Llamble Server for Windows (tray app + installer)
+  site/          llamble.com (GitHub Pages)
   deploy/        TrueNAS compose YAML (self-contained)
-  .github/       CI: builds the server image (GHCR) + Windows installer
-  tests/         API smoke test, bot test, mock llama server
-  Dockerfile     Builds the server image (web client + ffmpeg included)
+  tests/         API and browser tests with stand-ins for outside services
+  tools/         helper scripts (screenshots, third-party licenses)
 ```
-
-## Features
-
-- **Servers, channels, categories, roles and permissions** (16 permission bits, hoisted roles, colors), kicks and bans, nicknames, invites with expiry and max uses
-- **Messages**: markdown (bold, italic, underline, strike, `code`, code blocks, quotes, headings, ||spoilers||, masked links), replies, edits, deletes, reactions, @mentions with autocomplete, `:emoji:` autocomplete, typing indicators, unread markers and mention badges, per-channel search, jump to message
-- **Files**: drag-drop or paste, up to 10 per message, upload progress, spoilers, image grid and lightbox, inline video (seekable, with range requests and ffmpeg poster frames), audio player, file cards. Thumbnails are generated server-side.
-- **Link previews**: OpenGraph cards, direct image/video/GIF links, YouTube (plays via youtube-nocookie only after you click). Previews and images go through an SSRF-safe, HMAC-signed proxy, so clients' IPs never reach outside sites.
-- **GIFs**: a self-hosted, searchable GIF library with favorites. You can save any GIF from chat, or import from a Tenor/Giphy link (it's downloaded once). No GIF API is called at runtime.
-- **Voice/video**: voice channels, DM calls with ringing, camera, screen share (pick a screen or window, up to 1440p30 or 1080p60, with system audio on Windows), per-user volume, speaking rings, mute/deafen, global hotkeys (Ctrl+Shift+M / Ctrl+Shift+D), and device picker with mic test. Opus at 96 kbps by default (configurable up to 256).
-- **Desktop**: tray, minimize to tray, notifications plus taskbar flash for DMs and mentions, unread count in the title, `llamble://invite/CODE@host` links, spellcheck menu, autostart option
-- **AI bot** (see below)
-- **Admin**: one-time admin invite on first boot, account invites, password resets, user deletion, device list. A janitor cleans orphaned uploads, stale cache and expired invites.
-
-## The AI bot
-
-Each server can turn the bot on under **Server Settings → AI Bot**, and give it a personality prompt there. It replies when:
-
-- someone **@mentions** it (`@Llamble …`, which autocompletes in the composer)
-- someone **replies** to one of its messages
-- a message **starts with its name**: `llamble, …`, `hey llamble …`
-- it's a **DM** with the bot (Home → "Chat with Llamble")
-- the channel is marked **always-on** (it then answers every message)
-
-It reads the last ~40 messages for context, shows a typing indicator, streams its reply live into the message, and hides `<think>` reasoning from models like Qwen3.
-
-**Where it runs: a shared GPU pool.**
-
-1. **Members' GPUs.** Anyone allowed can offer their graphics card from the desktop app (**User Settings → AI & GPU**, off until they accept a consent screen). The app runs `llama-server` pinned to that PC's best card. The server always uses the **best available GPU among everyone currently lending**:
-   - A lender's PC only counts as *available* while its owner is **away** (no input for N minutes, or locked; on by default) and its GPU **isn't busy with something else**, like a game (over 30% use).
-   - While paused, the app **unloads the model to free the VRAM**, and the server switches to the next-best GPU.
-   - When the owner is idle again it reloads and rejoins. Logging off hands over immediately.
-2. **The server itself.** The built-in model from setup is the fallback whenever no lent GPU is available.
-
-**Admin switch:** **Settings → AI Model → GPU sharing** sets who may lend a GPU: *Off (server only)*, *Admins only* (default), or *Any member*. It also shows every lent GPU live: in use, standby, or paused and why.
-
-**Privacy rule (built in):** a lent GPU only ever receives conversations from channels its owner can already read.
-
-Recommended for your 4090: a Qwen3-14B or Gemma-3-27B class instruct GGUF at Q4_K_M with 16k context. Use the **CUDA** build of llama.cpp for Windows (from the llama.cpp GitHub releases). The NAS CPU fallback should use a small 3–4B Q4 model.
 
 ## Deploy on TrueNAS SCALE (Install via YAML)
 
@@ -64,7 +74,7 @@ GitHub Actions builds the server image (`ghcr.io/eeplanet/llamble:latest`, publi
 3. **Desktop app:** download the installer from this repo's Releases (`Llamble-Setup.exe`). It updates itself.
 4. **Android app:** download `Llamble.apk` from the same Releases and open it on the phone (allow "install unknown apps" once). It offers its own updates. Built from `android/`: a small Java app with no libraries that runs the same web app.
 
-Every other server setting is in the app for admins: **Settings → Server** (upload limit, link previews, who can create servers, bot name, recording), **AI Model** (model and GPU sharing), and **Remote Access**.
+Every other server setting is in the app for admins: **Settings → Settings & Updates** (upload limit, link previews, who can create servers, invites, Watch Party and Jellyfin, bot name, recording), **AI Model** (model and GPU sharing), and **Remote Access**.
 
 ### Accounts, kids and roles
 
@@ -160,15 +170,18 @@ tests/run_all.sh                         # every API suite against a fresh serve
                                          # llama-server, Hugging Face, Namecheap, LiveKit and a relay
 ```
 
-## Not done yet / next ideas
+## Coming next
 
-- Image and video generation in chat (stable-diffusion.cpp: FLUX.2-klein / Z-Image for images, LTX for video) on lent GPUs
-- Show recording: multi-camera with auto-switching, director mode, overlays, per-person consent
-- Per-channel permission overrides (only server-wide roles today)
-- Message pins, threads, custom server emoji, link to a specific message
-- Push notifications for phones (an Android app would reuse the web UI)
-- Bot in voice channels (whisper.cpp in, TTS out)
-- E2E encryption for DMs
+- Cleanup tools for instance admins (scheduled cleanups with warnings and "Download my files")
+- Forum and Blog spaces, Events, and a Help Desk with bug reports from every app
+- Games inside Llamble (see [docs/GAMES_SDK.md](docs/GAMES_SDK.md))
+- Per-space permission overrides; message pins and threads; custom server emoji
+- Mac, Linux and iPhone apps
+
+## Screenshots
+
+The pictures here are made by `tools/screenshots/make_screenshots.py`, which fills a fresh server with
+made-up people and chats and photographs it. Nothing in them comes from a real server.
 
 ## License
 
