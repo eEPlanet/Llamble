@@ -1662,3 +1662,13 @@ body.pop-body > .pop { height: 100vh; }
 .category-head.custom { cursor: pointer; }
 .channel[draggable="true"] { cursor: pointer; }
 .chat-head-emoji { font-size: 18px; line-height: 1; }
+.cat-here { font-size: 11px; margin-left: 4px; }
+.cat-new { width: 7px; height: 7px; border-radius: 50%; background: var(--text-strong); margin-left: 6px; }
+.watch-chat { flex-direction: column; }
+.watch-tabs { display: flex; gap: 4px; padding: 6px 8px; border-bottom: 1px solid var(--bg-3); flex: none; }
+.watch-tab { flex: 1; padding: 7px 8px; border-radius: 6px; background: none; border: 0; color: var(--muted); font: inherit; font-weight: 600; cursor: pointer; }
+.watch-tab.on { background: var(--bg-active); color: var(--text-strong); }
+.watch-side { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow-y: auto; }
+.watch-side > * { flex: 1; min-height: 0; }
+.watch-call { padding: 10px 16px; }
+.voice-view.idle .watch-idle-icon { font-size: 48px; }

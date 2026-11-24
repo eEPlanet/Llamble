@@ -8,11 +8,11 @@ import { can, selectChannel, useStore } from "../store";
 import { P } from "../types";
 import type { Channel } from "../types";
 import { toast } from "../ui";
-import { joinVoice, leaveVoice, needVideo, participants, setPeopleMuted, useVoice } from "../voice";
+import { joinVoice, leaveVoice, needVideo, participants, setPeopleMuted, toggleDeafen, toggleMute, useVoice } from "../voice";
 import { goOnline } from "../viewing";
 import { canStreamFromDevice, loadWatch, startDeviceStream, stopDeviceStream, targetMs, useMyStream, useWatch, watchAction, type WatchItem, type WatchState } from "../watch";
 import { ChatView } from "./ChatView";
-import { Avatar } from "./common";
+import { Avatar, Icon } from "./common";
 
 const fmt = (ms: number) => {
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -32,6 +32,8 @@ export function WatchView({ channel }: { channel: Channel }) {
   const people = useStore((s) => Object.values(s.voiceStates).filter((x) => x.channel_id === cid).map((x) => x.user_id).join(","));
   const users = useStore((s) => s.users);
   const kidBlocked = useStore((s) => !!s.me?.is_kid);
+  // chat or the queue, beside the player (below it on a phone)
+  const [side, setSide] = useState<"chat" | "queue">("chat");
   useEffect(() => {
     loadWatch(cid);
     const t = setInterval(() => loadWatch(cid), 30_000);
@@ -55,31 +57,56 @@ export function WatchView({ channel }: { channel: Channel }) {
               ))}
           </span>
           {channel.locked && <span className="muted small" title="Locked: only staff can come in">🔒 Locked</span>}
-          {inRoom ? (
-            <button className="btn small red" onClick={() => leaveVoice()}>
-              Leave
-            </button>
-          ) : (
-            <button className="btn small green" disabled={v.status === "connecting" || (channel.locked && !can(channel.guild_id!, P.LOCK_SPACES) && !can(channel.guild_id!, P.MANAGE_CHANNELS))} onClick={() => joinVoice(cid).catch((e) => toast(e.message, "error"))}>
-              {channel.locked ? "🔒 Locked" : v.status === "connecting" ? "Joining…" : "Join to watch"}
-            </button>
-          )}
         </header>
         {inRoom && st ? (
-          <Player cid={cid} st={st} />
+          <>
+            <Player cid={cid} st={st} />
+            <div className="call-controls watch-call">
+              <button className={"call-btn" + (v.muted ? " off" : "")} onClick={toggleMute} title="Mute" disabled={!v.canSpeak}>
+                <Icon name={v.muted ? "micOff" : "mic"} size={22} />
+              </button>
+              <button className={"call-btn" + (v.deafened ? " off" : "")} onClick={toggleDeafen} title="Deafen">
+                <Icon name={v.deafened ? "deaf" : "headphones"} size={22} />
+              </button>
+              <button className={"call-btn" + (v.peopleMuted ? " on" : "")} onClick={() => setPeopleMuted(!v.peopleMuted)} title="Mute people: silence everyone else's voices for you (the movie keeps playing)">
+                <Icon name="usersOff" size={22} />
+              </button>
+              <button className="call-btn hang" onClick={() => leaveVoice()} title="Disconnect">
+                <Icon name="phoneOff" size={22} />
+              </button>
+            </div>
+          </>
         ) : (
-          <div className="watch-idle">
-            <div className="watch-idle-icon">🍿</div>
+          // the same as a Voice & Video room you're not in yet
+          <div className="voice-view idle">
+            <span className="watch-idle-icon">🍿</span>
             <h2>{channel.name}</h2>
-            <p className="muted">{st?.now ? <>Playing now: <b>{st.now.item.title}</b></> : "Nothing is playing yet."}</p>
-            <p className="muted small">Join to watch together and talk. Anyone in the room can add to the queue.</p>
+            <p className="muted">
+              {people ? `${people.split(",").filter(Boolean).length} watching` : "No one is here yet."}
+              {st?.now ? <> · Playing now: <b>{st.now.item.title}</b></> : ""}
+            </p>
+            <button
+              className="btn green"
+              disabled={v.status === "connecting" || (channel.locked && !can(channel.guild_id!, P.LOCK_SPACES) && !can(channel.guild_id!, P.MANAGE_CHANNELS))}
+              onClick={() => joinVoice(cid).catch((e) => toast(e.message, "error"))}
+            >
+              {channel.locked ? "🔒 Locked" : v.status === "connecting" ? (v.step ? v.step + "…" : "Connecting…") : "Join Watch Party"}
+            </button>
+            {v.error && <p className="form-error">{v.error}</p>}
             {kidBlocked && <p className="muted small">If it won't let you in, ask a parent to turn on Watch Party for you.</p>}
           </div>
         )}
-        {st && <Queue cid={cid} st={st} inRoom={inRoom} />}
       </div>
       <div className="watch-chat">
-        <ChatView key={cid} channel={channel} />
+        <div className="watch-tabs">
+          <button className={"watch-tab" + (side === "chat" ? " on" : "")} onClick={() => setSide("chat")}>
+            💬 Chat
+          </button>
+          <button className={"watch-tab" + (side === "queue" ? " on" : "")} onClick={() => setSide("queue")}>
+            🎬 Queue{st?.queue?.length ? ` (${st.queue.length})` : ""}
+          </button>
+        </div>
+        <div className="watch-side">{side === "chat" ? <ChatView key={cid} channel={channel} /> : st ? <Queue cid={cid} st={st} inRoom={inRoom} /> : null}</div>
       </div>
     </div>
   );
@@ -283,7 +310,7 @@ async function resolveSource(item: WatchItem): Promise<Source> {
     const url = await vttBlob(`/api/watch/jellyfin/${item.src}/subs/${t.index}?source=${encodeURIComponent(s.media_source_id)}`).catch(() => "");
     if (url) subs.push({ url, label: t.label, lang: t.lang || undefined, on: !!t.default });
   }
-  return s.direct ? { src: media(`/api/watch/jellyfin/${item.src}/stream`), fallback: hls, subs } : { src: hls, subs };
+  return s.direct ? { src: media(`/api/watch/jellyfin/${item.src}/stream?source=${encodeURIComponent(s.media_source_id)}`), fallback: hls, subs } : { src: hls, subs };
 }
 
 /** A link, a library movie or a Jellyfin item: one video element (HLS through hls.js where

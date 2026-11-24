@@ -1036,20 +1036,28 @@ export function connectionQuality(): string {
 }
 
 /** Bring the microphone back if its device went away (unplugged headset, Windows switching the default, driver reset). */
+let micFails = 0;
 async function recoverMic() {
   const r = room;
   const s = vget();
-  if (!r || s.status !== "connected" || !s.canSpeak || s.muted || s.deafened) return;
+  // only while the call itself is up: after the app was in the background (Android back
+  // button, screen off) the call reconnects first, and the mic can't go out until it has
+  if (!r || s.status !== "connected" || r.state !== ConnectionState.Connected || !s.canSpeak || s.muted || s.deafened) return;
   const pub = r.localParticipant.getTrackPublication(Track.Source.Microphone);
   const live = pub?.track?.mediaStreamTrack?.readyState === "live";
-  if (live) return;
+  if (live) return (micFails = 0);
   try {
     const pub = r.localParticipant.getTrackPublication(Track.Source.Microphone);
     if (pub?.track) await r.localParticipant.unpublishTrack(pub.track, true);
     await setMic(r, true);
+    micFails = 0;
+    if (/microphone/i.test(vget().error || "")) vset({ error: null });
     console.warn("microphone restarted");
   } catch (e: any) {
-    vset({ error: "Microphone unavailable: " + e.message });
+    // tried again every few seconds; only say so if it keeps failing (about 20 s)
+    micFails++;
+    console.warn("microphone restart failed", e);
+    if (micFails >= 4) micError(e);
   }
 }
 // cheap watchdog: a mic track can end without any device event

@@ -97,6 +97,13 @@ async fn allowed(j: &Jf, id: &str) -> bool {
     ok
 }
 
+/// One item, asked for the way every Jellyfin version answers (older ones have no
+/// GET /Items/{id}; a list with one id works everywhere).
+async fn item(j: &Jf, id: &str, fields: &str) -> ApiResult<Value> {
+    let v = get_json(j, &format!("/Items?Ids={id}&Recursive=true&Fields={fields}")).await?;
+    v["Items"].get(0).cloned().ok_or_else(AppError::not_found)
+}
+
 fn item_brief(it: &Value) -> Value {
     let kind = match it["Type"].as_str().unwrap_or("") {
         "Movie" => "movie",
@@ -187,7 +194,7 @@ pub async fn queue_title(state: &Shared, id: &str) -> ApiResult<String> {
     if !allowed(&j, id).await {
         return Err(AppError::bad("that isn't in a shared Jellyfin library"));
     }
-    let v = get_json(&j, &format!("/Items/{id}")).await?;
+    let v = item(&j, &id, "ProductionYear,RunTimeTicks").await?;
     if v["Type"] == "Series" {
         return Err(AppError::bad("pick an episode"));
     }
@@ -222,7 +229,7 @@ pub async fn session(State(state): State<Shared>, auth: AuthUser, Path(id): Path
     if !allowed(&j, &id).await {
         return Err(AppError::not_found());
     }
-    let v = get_json(&j, &format!("/Items/{id}?Fields=MediaStreams,MediaSources")).await?;
+    let v = item(&j, &id, "MediaStreams,MediaSources").await?;
     let src = v["MediaSources"].get(0).cloned().unwrap_or(Value::Null);
     let streams = src["MediaStreams"].as_array().cloned().or_else(|| v["MediaStreams"].as_array().cloned()).unwrap_or_default();
     let subs: Vec<Value> = streams
@@ -269,12 +276,13 @@ async fn pass(j: &Jf, path: &str, headers: &HeaderMap) -> ApiResult<Response<Bod
 }
 
 /// GET /api/watch/jellyfin/{id}/stream — the file as it is (for players that can play it).
-pub async fn stream(State(state): State<Shared>, _auth: AuthUser, Path(id): Path<String>, headers: HeaderMap) -> ApiResult<Response<Body>> {
+pub async fn stream(State(state): State<Shared>, _auth: AuthUser, Path(id): Path<String>, Query(sq): Query<SubQ>, headers: HeaderMap) -> ApiResult<Response<Body>> {
     let j = jf(&state).ok_or_else(not_set)?;
     if !allowed(&j, &id).await {
         return Err(AppError::not_found());
     }
-    pass(&j, &format!("/Videos/{id}/stream?static=true"), &headers).await
+    let src = sq.source.filter(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')).unwrap_or_else(|| id.clone());
+    pass(&j, &format!("/Videos/{id}/stream?static=true&MediaSourceId={src}"), &headers).await
 }
 
 /// GET /api/watch/jf/{tok}/{id}/hls/{*rest} — Jellyfin's converted (HLS) playlists and parts.

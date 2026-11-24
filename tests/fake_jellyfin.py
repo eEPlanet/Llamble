@@ -42,7 +42,11 @@ class H(BaseHTTPRequestHandler):
         if path == "/Library/VirtualFolders":
             return self.send(200, [{"Name": "Movies", "ItemId": "movielib", "CollectionType": "movies"}, {"Name": "Home Videos", "ItemId": "homelib", "CollectionType": "homevideos"}])
         if path == "/Items":
-            parent = re.search(r"ParentId=(\w+)", q).group(1)
+            pm = re.search(r"ParentId=(\w+)", q)
+            if not pm:  # one item by id (how every version can be asked)
+                i = re.search(r"Ids=(\w+)", q).group(1)
+                return self.send(200, {"Items": [ITEMS[i]] if i in ITEMS else []})
+            parent = pm.group(1)
             term = re.search(r"SearchTerm=([^&]*)", q)
             ids = re.search(r"Ids=(\w+)", q)
             def under(i, root):
@@ -62,8 +66,9 @@ class H(BaseHTTPRequestHandler):
         m = re.match(r"^/Items/(\w+)/Images/Primary$", path)
         if m: return self.send(200, b"\xff\xd8\xff\xe0poster", "image/jpeg")
         m = re.match(r"^/Items/(\w+)$", path)
-        if m and m.group(1) in ITEMS: return self.send(200, ITEMS[m.group(1)])
+        if m: return self.send(405, {"error": "older Jellyfin: use /Users/{id}/Items/{id} or /Items?Ids="})
         m = re.match(r"^/Videos/(\w+)/stream$", path)
+        if m and "MediaSourceId=" not in q: return self.send(404, {"error": "no media source"})
         if m:
             r = self.headers.get("Range")
             if r:

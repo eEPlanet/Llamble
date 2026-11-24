@@ -111,6 +111,7 @@ function ChannelList({ guildId }: { guildId: string }) {
   const collapsed = useUI((s) => s.collapsed);
   const manage = can(guildId, P.MANAGE_CHANNELS);
   const [over, setOver] = useState<string | null>(null);
+  const voiceIn = useVoice((v) => v.channelId);
 
   // drop targets: a type heading = out of any group; a group = into it (or before it, for a group)
   const dropProps = (target: string, groupId: string | null) =>
@@ -136,6 +137,9 @@ function ChannelList({ guildId }: { guildId: string }) {
 
   const section = (key: string, label: string, kids: Channel[], group: Channel | null) => {
     const isCollapsed = collapsed[key];
+    // collapsed hides everything under it; the heading says if something's new or you're in there
+    const newInside = isCollapsed && kids.some((c) => isUnread(c));
+    const inside = isCollapsed && kids.some((c) => c.id === voiceIn);
     return (
       <div key={key} className={"category" + (over === key ? " drop-over" : "")} {...dropProps(key, group?.id ?? null)}>
         <div
@@ -167,6 +171,8 @@ function ChannelList({ guildId }: { guildId: string }) {
         >
           <Icon name="chevron" size={12} className={isCollapsed ? "rot" : ""} />
           <span>{label}</span>
+          {inside && <span className="cat-here" title="You're in a room in here">🔊</span>}
+          {newInside && <span className="cat-new" title="Something new in here" />}
           {manage && group && (
             <button
               className="icon-btn tiny"
@@ -180,9 +186,8 @@ function ChannelList({ guildId }: { guildId: string }) {
             </button>
           )}
         </div>
-        {kids
-          .filter((c) => !isCollapsed || c.id === currentChannelId() || isUnread(c) || c.kind === "voice")
-          .map((c) => (
+        {!isCollapsed &&
+          kids.map((c) => (
             <ChannelRow key={c.id} ch={c} />
           ))}
       </div>
