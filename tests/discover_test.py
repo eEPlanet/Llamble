@@ -145,4 +145,15 @@ call("GET", f"/api/discover/{games}", U, expect=404)
 call("POST", f"/api/channels/{chat['id']}/lock", A, json={"locked": True})
 assert chat["id"] not in [c["id"] for c in call("GET", f"/api/discover/{games}", T)["channels"]]
 call("GET", f"/api/discover/{games}/channels/{chat['id']}/messages", T, expect=404)
+# ---- spaces: a new category made with the space, and moving a space into a new one
+w = call("POST", f"/api/guilds/{games}/channels", A, json={"name": "Movie Night", "kind": "watch", "new_category": "Watch"})
+assert w["parent_id"]
+v = call("POST", f"/api/guilds/{games}/channels", A, json={"name": "Lounge", "kind": "voice"})
+assert v["parent_id"] is None
+v2 = call("PATCH", f"/api/channels/{v['id']}", A, json={"new_category": "Hangout"})
+assert v2["parent_id"] and v2["parent_id"] != w["parent_id"]
+v3 = call("PATCH", f"/api/channels/{v['id']}", A, json={"parent_id": w["parent_id"]})
+assert v3["parent_id"] == w["parent_id"]
+v4 = call("PATCH", f"/api/channels/{v['id']}", A, json={"parent_id": None})
+assert v4["parent_id"] is None
 print("discover ok")

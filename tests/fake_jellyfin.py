@@ -44,15 +44,19 @@ class H(BaseHTTPRequestHandler):
         if path == "/Items":
             parent = re.search(r"ParentId=(\w+)", q).group(1)
             term = re.search(r"SearchTerm=([^&]*)", q)
+            ids = re.search(r"Ids=(\w+)", q)
             def under(i, root):
                 return any(a["Id"] == root for a in ancestors(i))
+            if ids:
+                i = ids.group(1)
+                return self.send(200, {"Items": [ITEMS[i]] if i in ITEMS and under(i, parent) else []})
             items = [v for k, v in ITEMS.items() if v["Type"] in ("Movie", "Series", "Video") and under(k, parent)]
             if term:
                 t = term.group(1).replace("+", " ").lower()
                 items = [v for v in items if t in v["Name"].lower()]
             return self.send(200, {"Items": items})
         m = re.match(r"^/Items/(\w+)/Ancestors$", path)
-        if m: return self.send(200, ancestors(m.group(1)))
+        if m: return self.send(200, [a for a in ancestors(m.group(1)) if ITEMS.get(a["Id"], {}).get("Type") != "CollectionFolder"] + [{"Id": "root"}])
         m = re.match(r"^/Shows/(\w+)/Episodes$", path)
         if m: return self.send(200, {"Items": [v for v in ITEMS.values() if v.get("parent") == m.group(1)]})
         m = re.match(r"^/Items/(\w+)/Images/Primary$", path)

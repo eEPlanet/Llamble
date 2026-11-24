@@ -102,7 +102,18 @@ pub fn thumb_path(state: &Shared, id: &str) -> PathBuf {
 }
 
 /// Upload a single file (multipart field "file"). Returns the file object.
-pub async fn upload(State(state): State<Shared>, auth: AuthUser, mut mp: Multipart) -> ApiResult<Json<FileObj>> {
+/// Movies for the Watch Party library (instance admins) can be much bigger than other uploads.
+pub const ADMIN_MAX_UPLOAD: u64 = 200 * 1024 * 1024 * 1024;
+
+#[derive(serde::Deserialize, Default)]
+pub struct UploadQ {
+    /// "library": a movie for the Watch Party library (instance admins only; bigger limit)
+    #[serde(default)]
+    pub purpose: String,
+}
+
+pub async fn upload(State(state): State<Shared>, auth: AuthUser, axum::extract::Query(uq): axum::extract::Query<UploadQ>, mut mp: Multipart) -> ApiResult<Json<FileObj>> {
+    let limit = if auth.is_admin && uq.purpose == "library" { ADMIN_MAX_UPLOAD.max(state.s().max_upload_bytes()) } else { state.s().max_upload_bytes() };
     while let Some(mut field) = mp.next_field().await.map_err(|e| AppError::bad(e.to_string()))? {
         if field.name() != Some("file") {
             continue;
@@ -126,10 +137,13 @@ pub async fn upload(State(state): State<Shared>, auth: AuthUser, mut mp: Multipa
                 }
             };
             size += chunk.len() as u64;
-            if size > state.s().max_upload_bytes() {
+            if size > limit {
                 drop(f);
                 let _ = tokio::fs::remove_file(&tmp).await;
-                return Err(AppError(axum::http::StatusCode::PAYLOAD_TOO_LARGE, "file too large".into()));
+                // read the rest without keeping it: answering mid-upload drops the connection,
+                // and the app would only see "Upload failed" instead of why
+                while let Ok(Some(_)) = field.chunk().await {}
+                return Err(AppError(axum::http::StatusCode::PAYLOAD_TOO_LARGE, format!("That file is too big. The limit here is {} MB.", limit / 1024 / 1024)));
             }
             if head.len() < 64 {
                 let need = 64 - head.len();

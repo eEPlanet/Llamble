@@ -229,6 +229,24 @@ async fn migrate(pool: &SqlitePool) -> anyhow::Result<()> {
     // "channels" became "spaces": the default groups get the new names (only if never renamed)
     sqlx::query("UPDATE channels SET name = 'Chat' WHERE kind = 'category' AND name = 'Text Channels'").execute(pool).await?;
     sqlx::query("UPDATE channels SET name = 'Voice & Video' WHERE kind = 'category' AND name = 'Voice Channels'").execute(pool).await?;
+    // spaces now sort under their type (Chat, Voice & Video, Watch Party) by themselves, so the
+    // old starting "Chat" and "Voice & Video" groups go, when they still hold only their own
+    // kind of space (a group someone mixed or renamed stays as their own group)
+    for (name, kind) in [("Chat", "text"), ("Voice & Video", "voice")] {
+        sqlx::query(
+            "UPDATE channels SET parent_id = NULL WHERE parent_id IN (
+                SELECT c.id FROM channels c WHERE c.kind = 'category' AND c.name = ?1
+                AND NOT EXISTS (SELECT 1 FROM channels k WHERE k.parent_id = c.id AND k.kind <> ?2))",
+        )
+        .bind(name)
+        .bind(kind)
+        .execute(pool)
+        .await?;
+        sqlx::query("DELETE FROM channels WHERE kind = 'category' AND name = ? AND NOT EXISTS (SELECT 1 FROM channels k WHERE k.parent_id = channels.id)")
+            .bind(name)
+            .execute(pool)
+            .await?;
+    }
     // Home → highlights: auto-add AI pictures / finished recordings (per server)
     add_column(pool, "guilds", "highlights_auto_pictures", "INTEGER NOT NULL DEFAULT 1").await?;
     add_column(pool, "guilds", "highlights_auto_recordings", "INTEGER NOT NULL DEFAULT 1").await?;

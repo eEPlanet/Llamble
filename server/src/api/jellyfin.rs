@@ -64,15 +64,37 @@ fn not_set() -> AppError {
     AppError::bad("Jellyfin isn't connected on this Llamble")
 }
 
-/// Is this Jellyfin item inside one of the shared libraries?
+/// Answers from `allowed`, for a few minutes (a poster grid asks for hundreds at once).
+static ALLOWED: once_cell::sync::Lazy<dashmap::DashMap<String, (bool, i64)>> = once_cell::sync::Lazy::new(Default::default);
+
+/// Is this Jellyfin item inside one of the shared libraries? Asked of each library ("is this
+/// item somewhere under you?"): an item's own parents in Jellyfin are its folders on disk, not
+/// the library, so they can't answer it.
 async fn allowed(j: &Jf, id: &str) -> bool {
-    if j.libs.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+    if j.libs.is_empty() || id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
         return false;
     }
-    match get_json(j, &format!("/Items/{id}/Ancestors")).await {
-        Ok(Value::Array(a)) => a.iter().any(|x| x["Id"].as_str().map(|i| j.libs.iter().any(|l| l.eq_ignore_ascii_case(i))).unwrap_or(false)),
-        _ => false,
+    let key = format!("{}|{}|{id}", j.url, j.libs.join(","));
+    let now = crate::error::now_ms();
+    if let Some(v) = ALLOWED.get(&key) {
+        if now - v.1 < 5 * 60_000 {
+            return v.0;
+        }
     }
+    let mut ok = false;
+    for lib in &j.libs {
+        if let Ok(v) = get_json(j, &format!("/Items?ParentId={lib}&Recursive=true&Ids={id}&Limit=1")).await {
+            if v["Items"].as_array().map(|a| !a.is_empty()).unwrap_or(false) {
+                ok = true;
+                break;
+            }
+        }
+    }
+    if ALLOWED.len() > 20_000 {
+        ALLOWED.clear();
+    }
+    ALLOWED.insert(key, (ok, now));
+    ok
 }
 
 fn item_brief(it: &Value) -> Value {

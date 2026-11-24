@@ -238,11 +238,11 @@ function Preview({ gid, back }: { gid: string; back: () => void }) {
             {rooms.map((c) =>
               c.kind === "text" ? (
                 <button key={c.id} className={"discover-room" + (chat === c.id ? " on" : "")} onClick={() => setChat(c.id)}>
-                  <Icon name="hash" size={15} /> <span className="ellipsis">{c.name}</span>
+                  <span>💬</span> <span className="ellipsis">{c.name}</span>
                 </button>
               ) : (
                 <div key={c.id} className="discover-room static">
-                  <Icon name="speaker" size={15} /> <span className="ellipsis grow">{c.name}</span>
+                  <span>{c.kind === "watch" ? "🍿" : "🔊"}</span> <span className="ellipsis grow">{c.name}</span>
                   {c.in_room > 0 && <span className="muted small">{c.in_room} here</span>}
                 </div>
               ),

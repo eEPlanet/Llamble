@@ -179,21 +179,23 @@ function CreateChannel({ guildId, parentId, kind: initialKind }: { guildId: stri
   const [kind, setKind] = useState<"text" | "voice" | "watch" | "category">(initialKind || "text");
   const watchOn = useStore((s) => s.config.watch?.on ?? false);
   const [name, setName] = useState("");
-  const [parent, setParent] = useState(parentId);
-  const cats = useStore(useShallow((s) => Object.values(s.channels).filter((c) => c.guild_id === guildId && c.kind === "category")));
+  // it lands under its type (Chat, Voice & Video, Watch), or in the group it was added from
+  const group = useStore((s) => (parentId ? s.channels[parentId] : undefined));
+  const pickKind = (k: typeof kind) => setKind(k);
   const { busy, error, run } = useSubmit(async () => {
-    const ch = await api(`/api/guilds/${guildId}/channels`, { body: { name, kind, parent_id: kind === "category" ? null : parent } });
+    const ch = await api(`/api/guilds/${guildId}/channels`, { body: { name, kind, parent_id: kind === "category" ? null : parentId } });
     if (ch.kind === "text") selectChannel(guildId, ch.id);
   });
   return (
     <form className="modal" onSubmit={run}>
-      <h2>{kind === "category" ? "Create Category" : "Add a Space"}</h2>
+      <h2>{kind === "category" ? "Make a Group" : group ? `Add a Space to ${group.name}` : "Add a Space"}</h2>
+      {kind === "category" && <p className="muted small">A group holds any spaces you move into it (drag them, or right-click → Move to…). Spaces outside groups stay under their type.</p>}
       {kind !== "category" && (
         <div className="kind-pick">
           {((watchOn ? ["text", "voice", "watch"] : ["text", "voice"]) as ("text" | "voice" | "watch")[]).map((k) => (
             <label key={k} className={"kind-opt" + (kind === k ? " on" : "")}>
-              <input type="radio" checked={kind === k} onChange={() => setKind(k)} />
-              {k === "watch" ? <span className="kind-emoji">🍿</span> : <Icon name={k === "text" ? "hash" : "speaker"} size={22} />}
+              <input type="radio" checked={kind === k} onChange={() => pickKind(k)} />
+              <span className="kind-emoji">{k === "watch" ? "🍿" : k === "voice" ? "🔊" : "💬"}</span>
               <div>
                 <b>{k === "text" ? "Chat" : k === "voice" ? "Voice & Video" : "Watch Party"}</b>
                 <div className="muted small">{k === "text" ? "Messages, images, GIFs, files" : k === "voice" ? "Talk, video, and screen share" : "Watch together: a shared player and queue, with voice and chat"}</div>
@@ -204,21 +206,8 @@ function CreateChannel({ guildId, parentId, kind: initialKind }: { guildId: stri
       )}
       <label>
         Name
-        <input value={name} onChange={(e) => setName(kind === "text" ? e.target.value.toLowerCase().replace(/\s+/g, "-") : e.target.value)} autoFocus maxLength={100} placeholder={kind === "text" ? "new-channel" : kind === "voice" ? "Lounge" : kind === "watch" ? "Movie Night" : "PROJECTS"} />
+        <input value={name} onChange={(e) => setName(kind === "text" ? e.target.value.toLowerCase().replace(/\s+/g, "-") : e.target.value)} autoFocus maxLength={100} placeholder={kind === "text" ? "new-chat" : kind === "voice" ? "Lounge" : kind === "watch" ? "Movie Night" : "Gaming"} />
       </label>
-      {kind !== "category" && cats.length > 0 && (
-        <label>
-          Category
-          <select value={parent || ""} onChange={(e) => setParent(e.target.value || null)}>
-            <option value="">No category</option>
-            {cats.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-        </label>
-      )}
       {error && <div className="form-error">{error}</div>}
       <div className="modal-foot">
         <button type="button" className="btn link" onClick={closeModal}>
@@ -242,7 +231,7 @@ function EditChannel({ channelId }: { channelId: string }) {
   if (!ch) return null;
   return (
     <form className="modal" onSubmit={run}>
-      <h2>Edit {ch.kind === "category" ? "Category" : "Space"}</h2>
+      <h2>{ch.kind === "category" ? "Rename Group" : "Edit Space"}</h2>
       <label>
         Name
         <input value={name} onChange={(e) => setName(e.target.value)} autoFocus />

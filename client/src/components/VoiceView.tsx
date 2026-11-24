@@ -130,7 +130,7 @@ export function VoiceView({ channel }: { channel: Channel }) {
   return (
     <div className="voice-view">
       <header className="chat-header">
-        <Icon name="speaker" size={22} className="muted" />
+        <span className="chat-head-emoji">🔊</span>
         <span className="chat-title">{channel.name}</span>
         {channel.locked && <span className="muted small" title="Locked: only staff can come in">🔒 Locked</span>}
         <span className={"voice-label " + v.status}>

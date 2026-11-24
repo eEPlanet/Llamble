@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { listeningIn, useListen } from "../listen";
 import { useShows } from "../show";
 import { api } from "../api";
@@ -38,7 +38,7 @@ function GuildHeader({ guildId }: { guildId: string }) {
     { label: "AI Bot", onClick: () => openModal({ kind: "serverSettings", guildId, tab: "bot" }), disabled: !can(guildId, P.MANAGE_GUILD) },
     { separator: true, label: "" },
     { label: "Add a Space", onClick: () => openModal({ kind: "createChannel", guildId }), disabled: !can(guildId, P.MANAGE_CHANNELS) },
-    { label: "Create Category", onClick: () => openModal({ kind: "createChannel", guildId, channelKind: "category" }), disabled: !can(guildId, P.MANAGE_CHANNELS) },
+    { label: "Make a Group", onClick: () => openModal({ kind: "createChannel", guildId, channelKind: "category" }), disabled: !can(guildId, P.MANAGE_CHANNELS) },
     { label: "Mark As Read", onClick: () => markGuildRead(guildId) },
     { separator: true, label: "" },
     {
@@ -64,65 +64,197 @@ function GuildHeader({ guildId }: { guildId: string }) {
   );
 }
 
+/** Each kind of space has a full-color mark: 💬 chat, 🔊 voice & video, 🍿 watch party. */
+export function spaceEmoji(kind: string): string {
+  return kind === "voice" ? "🔊" : kind === "watch" ? "🍿" : "💬";
+}
+
+/** The type headings spaces sort under by themselves (unless they're in a group). */
+const TYPE_GROUPS: { kind: Channel["kind"]; label: string }[] = [
+  { kind: "text", label: "Chat" },
+  { kind: "voice", label: "Voice & Video" },
+  { kind: "watch", label: "Watch" },
+];
+
+/** What's being dragged in the space list (a space, or a group to reorder). */
+let dragging: { id: string; group: boolean } | null = null;
+
+async function moveTo(spaceId: string, groupId: string | null) {
+  try {
+    await api(`/api/channels/${spaceId}`, { method: "PATCH", body: { parent_id: groupId } });
+  } catch (e: any) {
+    toast(e.message, "error");
+  }
+}
+
+/** Put a group just before another one (drag a group's heading onto another's). */
+async function reorderGroup(guildId: string, id: string, before: string) {
+  const s = useStore.getState();
+  const groups = Object.values(s.channels)
+    .filter((c) => c.guild_id === guildId && c.kind === "category" && c.id !== id)
+    .sort((a, b) => a.position - b.position);
+  const at = groups.findIndex((g) => g.id === before);
+  const moved = s.channels[id];
+  if (!moved) return;
+  groups.splice(at < 0 ? groups.length : at, 0, moved);
+  for (let i = 0; i < groups.length; i++) {
+    if (groups[i].position !== i) await api(`/api/channels/${groups[i].id}`, { method: "PATCH", body: { position: i } }).catch(() => {});
+  }
+}
+
 function ChannelList({ guildId }: { guildId: string }) {
   const channels = useStore((s) => s.channels);
   const sort = channelSort(useStore.getState());
   const list = Object.values(channels).filter((c) => c.guild_id === guildId).sort(sort);
-  const cats = list.filter((c) => c.kind === "category").sort((a, b) => a.position - b.position);
+  const groups = list.filter((c) => c.kind === "category").sort((a, b) => a.position - b.position);
   const loose = list.filter((c) => c.kind !== "category" && (!c.parent_id || !channels[c.parent_id]));
   const collapsed = useUI((s) => s.collapsed);
   const manage = can(guildId, P.MANAGE_CHANNELS);
+  const [over, setOver] = useState<string | null>(null);
+
+  // drop targets: a type heading = out of any group; a group = into it (or before it, for a group)
+  const dropProps = (target: string, groupId: string | null) =>
+    manage
+      ? {
+          onDragOver: (e: React.DragEvent) => {
+            if (!dragging || (dragging.group && !groupId)) return;
+            e.preventDefault();
+            setOver(target);
+          },
+          onDragLeave: () => setOver((o) => (o === target ? null : o)),
+          onDrop: (e: React.DragEvent) => {
+            e.preventDefault();
+            setOver(null);
+            const d = dragging;
+            dragging = null;
+            if (!d) return;
+            if (d.group) groupId && d.id !== groupId && reorderGroup(guildId, d.id, groupId);
+            else if ((channels[d.id]?.parent_id || null) !== groupId) moveTo(d.id, groupId);
+          },
+        }
+      : {};
+
+  const section = (key: string, label: string, kids: Channel[], group: Channel | null) => {
+    const isCollapsed = collapsed[key];
+    return (
+      <div key={key} className={"category" + (over === key ? " drop-over" : "")} {...dropProps(key, group?.id ?? null)}>
+        <div
+          className={"category-head" + (group ? " custom" : "")}
+          draggable={!!group && manage}
+          onDragStart={() => group && (dragging = { id: group.id, group: true })}
+          onDragEnd={() => (dragging = null)}
+          onClick={() => toggleCollapsed(key)}
+          onContextMenu={(e) =>
+            manage &&
+            group &&
+            openMenu(e, [
+              { label: "Add a Space here", onClick: () => openModal({ kind: "createChannel", guildId, parentId: group.id }) },
+              { label: "Rename Group", onClick: () => openModal({ kind: "editChannel", channelId: group.id }) },
+              {
+                label: "Delete Group",
+                danger: true,
+                onClick: () =>
+                  openModal({
+                    kind: "confirm",
+                    title: `Delete the group '${group.name}'?`,
+                    body: "Its spaces aren't deleted: they go back under their type (Chat, Voice & Video, Watch).",
+                    confirmLabel: "Delete Group",
+                    onConfirm: () => api(`/api/channels/${group.id}`, { method: "DELETE" }),
+                  }),
+              },
+            ])
+          }
+        >
+          <Icon name="chevron" size={12} className={isCollapsed ? "rot" : ""} />
+          <span>{label}</span>
+          {manage && group && (
+            <button
+              className="icon-btn tiny"
+              title="Add a Space here"
+              onClick={(e) => {
+                e.stopPropagation();
+                openModal({ kind: "createChannel", guildId, parentId: group.id });
+              }}
+            >
+              <Icon name="plus" size={16} />
+            </button>
+          )}
+        </div>
+        {kids
+          .filter((c) => !isCollapsed || c.id === currentChannelId() || isUnread(c) || c.kind === "voice")
+          .map((c) => (
+            <ChannelRow key={c.id} ch={c} />
+          ))}
+      </div>
+    );
+  };
+
+  const spacesMenu = (e: React.MouseEvent) =>
+    openMenu({ clientX: e.currentTarget.getBoundingClientRect().left, clientY: e.currentTarget.getBoundingClientRect().bottom + 4 }, [
+      { label: "Add a Space", onClick: () => openModal({ kind: "createChannel", guildId }) },
+      { label: "Make a Group", onClick: () => openModal({ kind: "createChannel", guildId, channelKind: "category" }) },
+    ]);
 
   return (
     <>
       <GuildHeader guildId={guildId} />
       <div className="channel-scroll">
         <BoardRows guildId={guildId} />
-        {loose.map((c) => (
+        <div className="spaces-head">
+          <span>Spaces</span>
+          {manage && (
+            <button className="icon-btn tiny" title="Add a Space or make a group" onClick={spacesMenu}>
+              <Icon name="plus" size={16} />
+            </button>
+          )}
+        </div>
+        {TYPE_GROUPS.map((t) => {
+          const kids = loose.filter((c) => c.kind === t.kind).sort((a, b) => a.position - b.position);
+          return kids.length ? section("type:" + t.kind, t.label, kids, null) : null;
+        })}
+        {/* anything of a kind without its own heading */}
+        {loose.filter((c) => !TYPE_GROUPS.some((t) => t.kind === c.kind)).map((c) => (
           <ChannelRow key={c.id} ch={c} />
         ))}
-        {cats.map((cat) => {
-          const kids = list.filter((c) => c.parent_id === cat.id).sort((a, b) => a.position - b.position);
-          const isCollapsed = collapsed[cat.id];
-          return (
-            <div key={cat.id} className="category">
-              <div
-                className="category-head"
-                onClick={() => toggleCollapsed(cat.id)}
-                onContextMenu={(e) =>
-                  manage &&
-                  openMenu(e, [
-                    { label: "Add a Space", onClick: () => openModal({ kind: "createChannel", guildId, parentId: cat.id }) },
-                    { label: "Edit Category", onClick: () => openModal({ kind: "editChannel", channelId: cat.id }) },
-                  ])
-                }
-              >
-                <Icon name="chevron" size={12} className={isCollapsed ? "rot" : ""} />
-                <span>{cat.name}</span>
-                {manage && (
-                  <button
-                    className="icon-btn tiny"
-                    title="Add a Space"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      openModal({ kind: "createChannel", guildId, parentId: cat.id });
-                    }}
-                  >
-                    <Icon name="plus" size={16} />
-                  </button>
-                )}
-              </div>
-              {kids
-                .filter((c) => !isCollapsed || c.id === currentChannelId() || isUnread(c) || c.kind === "voice")
-                .map((c) => (
-                  <ChannelRow key={c.id} ch={c} />
-                ))}
-            </div>
-          );
-        })}
+        {groups.map((g) =>
+          section(
+            g.id,
+            g.name,
+            list.filter((c) => c.parent_id === g.id).sort((a, b) => a.position - b.position),
+            g,
+          ),
+        )}
       </div>
     </>
   );
+}
+
+/** Space → Move to…: a group, out of any group, or a new group. */
+export function moveToMenu(e: React.MouseEvent, ch: Channel) {
+  const s = useStore.getState();
+  const groups = Object.values(s.channels)
+    .filter((c) => c.guild_id === ch.guild_id && c.kind === "category")
+    .sort((a, b) => a.position - b.position);
+  openMenu(e, [
+    ...groups.map((g) => ({ label: (ch.parent_id === g.id ? "✓ " : "") + g.name, onClick: () => moveTo(ch.id, g.id), disabled: ch.parent_id === g.id })),
+    { label: "No group (under " + (TYPE_GROUPS.find((t) => t.kind === ch.kind)?.label || "its type") + ")", onClick: () => moveTo(ch.id, null), disabled: !ch.parent_id },
+    { separator: true, label: "" },
+    {
+      label: "New group…",
+      onClick: () =>
+        openModal({
+          kind: "prompt",
+          title: "New group",
+          label: "Group name",
+          placeholder: "Gaming",
+          confirmLabel: "Make it and move",
+          onSubmit: (name: string) =>
+            api(`/api/channels/${ch.id}`, { method: "PATCH", body: { new_category: name } })
+              .then(() => {})
+              .catch((er: any) => toast(er.message, "error")),
+        }),
+    },
+  ]);
 }
 
 /** The server's board, at the top of its channel list. */
@@ -179,12 +311,14 @@ function ChannelRow({ ch }: { ch: Channel }) {
 
   const onClick = () => {
     selectChannel(ch.guild_id!, ch.id);
-    if (ch.kind === "voice" && !inThis) joinVoice(ch.id);
+    // rooms (voice and Watch Party): clicking one goes in
+    if ((ch.kind === "voice" || ch.kind === "watch") && !inThis) joinVoice(ch.id).catch((e: any) => toast(e.message, "error"));
   };
   const menu = (e: React.MouseEvent) =>
     openMenu(e, [
       { label: "Mark As Read", onClick: () => ch.last_message_id && api(`/api/channels/${ch.id}/ack`, { body: { message_id: ch.last_message_id } }), disabled: ch.kind !== "text" },
       { label: "Edit Space", onClick: () => openModal({ kind: "editChannel", channelId: ch.id }), disabled: !manage },
+      ...(manage ? [{ label: "Move to…", onClick: () => setTimeout(() => moveToMenu(e, ch), 0) }] : []),
       {
         label: ch.locked ? "🔓 Unlock Space" : "🔒 Lock Space",
         onClick: () => api(`/api/channels/${ch.id}/lock`, { body: { locked: !ch.locked } }).catch((e) => toast(e.message, "error")),
@@ -210,9 +344,17 @@ function ChannelRow({ ch }: { ch: Channel }) {
 
   return (
     <>
-      <div className={"channel" + (active ? " active" : "") + (unread ? " unread" : "")} onClick={onClick} onContextMenu={menu}>
+      <div
+        className={"channel" + (active ? " active" : "") + (unread ? " unread" : "")}
+        onClick={onClick}
+        onContextMenu={menu}
+        draggable={manage}
+        onDragStart={() => (dragging = { id: ch.id, group: false })}
+        onDragEnd={() => (dragging = null)}
+        title={ch.kind === "text" ? "Chat space" : ch.kind === "voice" ? "Voice & Video space" : ch.kind === "watch" ? "Watch Party space" : undefined}
+      >
         {unread && !active && <span className="unread-pip" />}
-        {ch.kind === "watch" ? <span className="channel-icon channel-emoji-icon">🍿</span> : <Icon name={ch.kind === "voice" ? "speaker" : "hash"} size={18} className="channel-icon" />}
+        <span className="channel-icon channel-emoji-icon">{spaceEmoji(ch.kind)}</span>
         <span className="ellipsis">{ch.name}</span>
         {ch.locked && <span title="Locked: only staff can go in">🔒</span>}
         {ch.kind === "voice" && <RecBadge channelId={ch.id} />}

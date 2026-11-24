@@ -722,7 +722,7 @@ export function WatchAdmin({ f, set }: { f: any; set: (k: string, v: any) => voi
   const addMovie = async (file: File) => {
     setUp(0);
     try {
-      const u = await upload(file, file.name, (p: number) => setUp(p));
+      const u = await upload(file, file.name, (p: number) => setUp(p), undefined, "library");
       await api("/api/watch/library", { body: { file_id: u.id, title: title.trim() || file.name.replace(/\.[^.]+$/, "") } });
       setTitle("");
       reload();

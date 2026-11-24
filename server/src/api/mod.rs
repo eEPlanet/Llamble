@@ -30,7 +30,7 @@ use serde_json::{json, Value};
 pub fn router(state: Shared) -> Router<Shared> {
     let _ = &state;
     // per-file size is enforced in files.rs from Server Settings; this is only a hard ceiling
-    let upload_limit: usize = 20_000 * 1024 * 1024;
+    let upload_limit: usize = crate::api::files::ADMIN_MAX_UPLOAD as usize;
     Router::new()
         .route("/api/info", get(info))
         // shared invite links open the web app's sign-up page

@@ -52,7 +52,7 @@ export function ChatView({ channel }: { channel: Channel }) {
       }}
     >
       <header className="chat-header">
-        {channel.kind === "dm" ? <Avatar user={otherUser} size={24} status /> : channel.kind === "watch" ? <span className="muted">💬</span> : <Icon name={party ? "users" : "hash"} size={22} className="muted" />}
+        {channel.kind === "dm" ? <Avatar user={otherUser} size={24} status /> : party ? <Icon name="users" size={22} className="muted" /> : <span className="chat-head-emoji">💬</span>}
         <span className="chat-title">{title}</span>
         {channel.locked && <span className="muted small" title="Locked: only staff can come in">🔒 Locked</span>}
         {otherUser?.is_bot && <BotTag />}
@@ -363,7 +363,7 @@ function ChannelStart({ channel }: { channel: Channel }) {
         </>
       ) : (
         <>
-          <div className="channel-start-icon">{channel.kind === "watch" ? <span style={{ fontSize: 36 }}>🍿</span> : <Icon name="hash" size={40} />}</div>
+          <div className="channel-start-icon"><span style={{ fontSize: 36 }}>{channel.kind === "watch" ? "🍿" : "💬"}</span></div>
           <h1>Welcome to {channel.kind === "text" ? "#" : ""}{channel.name}!</h1>
           <p className="muted">This is the start of {channel.kind === "text" ? `#${channel.name}` : channel.kind === "watch" ? "this Watch Party's chat" : "this space's chat"}.{bot ? ` Mention @${bot.name} to ask the AI (if it's enabled here).` : ""}</p>
         </>

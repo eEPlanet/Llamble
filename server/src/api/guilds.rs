@@ -71,13 +71,10 @@ pub async fn create_guild(State(state): State<Shared>, auth: AuthUser, Json(req)
         .bind(&id).bind(&id).bind("@everyone").bind(perms::DEFAULT_EVERYONE).execute(&mut *tx).await?;
     sqlx::query("INSERT INTO members (guild_id, user_id, joined_at) VALUES (?,?,?)")
         .bind(&id).bind(&auth.id).bind(now).execute(&mut *tx).await?;
-    let cat_text = new_id();
-    let cat_voice = new_id();
+    // no groups to start: spaces sort under their type (Chat, Voice & Video) by themselves
     for (cid, kind, cname, parent, pos) in [
-        (cat_text.clone(), "category", "Chat", None, 0),
-        (new_id(), "text", "general", Some(cat_text.clone()), 0),
-        (cat_voice.clone(), "category", "Voice & Video", None, 1),
-        (new_id(), "voice", "General", Some(cat_voice.clone()), 0),
+        (new_id(), "text", "general", None::<String>, 0),
+        (new_id(), "voice", "General", None::<String>, 0),
     ] {
         sqlx::query("INSERT INTO channels (id, guild_id, kind, name, parent_id, position, created_at) VALUES (?,?,?,?,?,?,?)")
             .bind(cid).bind(&id).bind(kind).bind(cname).bind(parent).bind(pos).bind(now)
@@ -144,6 +141,8 @@ pub async fn remove_member(state: &Shared, gid: &str, uid: &str) -> ApiResult<()
 #[derive(Deserialize)]
 pub struct UpdateGuild {
     pub name: Option<String>,
+    /// null removes the icon
+    #[serde(default, deserialize_with = "double_option")]
     pub icon_file_id: Option<Option<String>>,
     pub highlights_auto_pictures: Option<bool>,
     pub highlights_auto_recordings: Option<bool>,
@@ -204,6 +203,25 @@ pub struct CreateChannel {
     pub kind: String,
     pub parent_id: Option<String>,
     pub topic: Option<String>,
+    /// put it in a new category with this name (made first)
+    #[serde(default)]
+    pub new_category: Option<String>,
+}
+
+/// Make a category at the bottom of the list (for "New category…" when adding or moving a space).
+async fn make_category(state: &Shared, gid: &str, name: &str) -> ApiResult<String> {
+    let name = clean_channel_name("category", name);
+    if name.is_empty() {
+        return Err(AppError::bad("name the new category"));
+    }
+    let pos: i64 = sqlx::query_scalar("SELECT COALESCE(MAX(position)+1, 0) FROM channels WHERE guild_id = ? AND kind = 'category'").bind(gid).fetch_one(&state.db).await?;
+    let id = new_id();
+    sqlx::query("INSERT INTO channels (id, guild_id, kind, name, topic, parent_id, position, created_at) VALUES (?,?, 'category', ?, '', NULL, ?, ?)")
+        .bind(&id).bind(gid).bind(&name).bind(pos).bind(now_ms())
+        .execute(&state.db).await?;
+    let ch = load_channel(&state.db, &id).await?;
+    state.emit_guild(gid, "CHANNEL_CREATE", &ch).await;
+    Ok(id)
 }
 
 pub fn clean_channel_name(kind: &str, name: &str) -> String {
@@ -227,6 +245,10 @@ pub async fn create_channel(State(state): State<Shared>, auth: AuthUser, Path(gi
     if name.is_empty() {
         return Err(AppError::bad("name required"));
     }
+    let mut req = req;
+    if let (Some(c), true) = (&req.new_category, req.kind != "category") {
+        req.parent_id = Some(make_category(&state, &gid, c).await?);
+    }
     let pos: i64 = sqlx::query_scalar("SELECT COALESCE(MAX(position)+1, 0) FROM channels WHERE guild_id = ? AND parent_id IS ?")
         .bind(&gid).bind(&req.parent_id).fetch_one(&state.db).await?;
     let id = new_id();
@@ -244,10 +266,16 @@ pub async fn create_channel(State(state): State<Shared>, auth: AuthUser, Path(gi
 pub struct UpdateChannel {
     pub name: Option<String>,
     pub topic: Option<String>,
+    /// null takes it out of its category
+    #[serde(default, deserialize_with = "double_option")]
     pub parent_id: Option<Option<String>>,
     pub position: Option<i64>,
     /// auto-delete messages older than N days; null turns it off
+    #[serde(default, deserialize_with = "double_option")]
     pub retention_days: Option<Option<i64>>,
+    /// move it into a new category with this name (made first)
+    #[serde(default)]
+    pub new_category: Option<String>,
 }
 
 pub async fn update_channel(State(state): State<Shared>, auth: AuthUser, Path(cid): Path<String>, Json(req): Json<UpdateChannel>) -> ApiResult<Json<Channel>> {
@@ -263,7 +291,11 @@ pub async fn update_channel(State(state): State<Shared>, auth: AuthUser, Path(ci
     if let Some(t) = req.topic {
         sqlx::query("UPDATE channels SET topic = ? WHERE id = ?").bind(t.chars().take(1024).collect::<String>()).bind(&cid).execute(&state.db).await?;
     }
-    if let Some(p) = req.parent_id {
+    let parent = match (&req.new_category, ch.kind != "category") {
+        (Some(c), true) => Some(Some(make_category(&state, &gid, c).await?)),
+        _ => req.parent_id,
+    };
+    if let Some(p) = parent {
         if ch.kind != "category" {
             sqlx::query("UPDATE channels SET parent_id = ? WHERE id = ?").bind(p).bind(&cid).execute(&state.db).await?;
         }
@@ -568,4 +600,13 @@ pub async fn create_instance_invite(State(state): State<Shared>, auth: AuthUser,
         .bind(&code).bind(&auth.id).bind(req.max_uses.unwrap_or(1)).bind(exp).bind(req.grants_admin.unwrap_or(false)).bind(now_ms())
         .execute(&state.db).await?;
     Ok(Json(json!({ "code": code })))
+}
+
+/// A field that can be left out (no change) or sent as null (clear it).
+fn double_option<'de, D, T>(d: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(d).map(Some)
 }

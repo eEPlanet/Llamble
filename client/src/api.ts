@@ -90,10 +90,15 @@ export function avatarUrl(fileId: string | null | undefined): string {
   return fileId ? media(`/api/files/${fileId}`) : "";
 }
 
-export function upload(file: File | Blob, filename: string, onProgress?: (p: number) => void, signal?: AbortSignal): Promise<FileObj> {
+export async function upload(file: File | Blob, filename: string, onProgress?: (p: number) => void, signal?: AbortSignal, purpose?: "library"): Promise<FileObj> {
+  // say it's too big before sending it all (movies for the library, by instance admins, can be bigger)
+  const { useStore } = await import("./store");
+  const st = useStore.getState();
+  const max = st.config.max_upload_bytes;
+  if (max && !(purpose === "library" && st.me?.is_admin) && file.size > max) throw new ApiError(413, `That file is too big. The limit here is ${Math.round(max / 1024 / 1024)} MB.`);
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open("POST", session.server + "/api/files");
+    xhr.open("POST", session.server + "/api/files" + (purpose ? `?purpose=${purpose}` : ""));
     xhr.setRequestHeader("Authorization", `Bearer ${session.token}`);
     xhr.upload.onprogress = (e) => e.lengthComputable && onProgress?.(e.loaded / e.total);
     xhr.onload = () => {
@@ -104,7 +109,7 @@ export function upload(file: File | Blob, filename: string, onProgress?: (p: num
       if (xhr.status >= 200 && xhr.status < 300) resolve(data);
       else reject(new ApiError(xhr.status, data?.error || "Upload failed"));
     };
-    xhr.onerror = () => reject(new ApiError(0, "Upload failed"));
+    xhr.onerror = () => reject(new ApiError(0, "Upload failed: the connection dropped. If this keeps happening with big files, something between you and the server may limit upload size."));
     xhr.onabort = () => reject(new ApiError(0, "Upload cancelled"));
     signal?.addEventListener("abort", () => xhr.abort());
     const fd = new FormData();

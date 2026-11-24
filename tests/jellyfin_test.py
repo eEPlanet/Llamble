@@ -100,6 +100,17 @@ try:
     m = [x for x in call("GET", "/api/watch/library", J)["movies"] if x["file_id"] == f["id"]][0]
     assert call("GET", f"/api/files/{m['poster_file_id']}", J).headers["content-type"].startswith("image/")
     assert m["title"] == "Clip (2026)" and b"Better" in call("GET", f"/api/files/{m['subs_file_id']}", J).content
+    # ---- uploads: over the limit says why (not a dropped connection); instance admins (movies) can go bigger
+    call("PUT", "/api/admin/settings", A, json={"max_upload_mb": 1})
+    big = b"\0" * (2 * 1024 * 1024)
+    r = requests.post(B + "/api/files", headers=H(J), files={"file": ("big.mp4", big, "video/mp4")})
+    assert r.status_code == 413 and "too big" in r.json()["error"], (r.status_code, r.text[:200])
+    r = requests.post(B + "/api/files", headers=H(A), files={"file": ("big.mp4", big, "video/mp4")})
+    assert r.status_code == 413  # admins too, for normal uploads
+    r = requests.post(B + "/api/files?purpose=library", headers=H(A), files={"file": ("big.mp4", big, "video/mp4")})
+    assert r.status_code == 200, r.text[:200]
+    r = requests.post(B + "/api/files?purpose=library", headers=H(J), files={"file": ("big.mp4", big, "video/mp4")})
+    assert r.status_code == 413
     print("jellyfin ok")
 finally:
     jf.terminate()
