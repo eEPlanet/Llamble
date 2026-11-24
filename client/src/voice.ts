@@ -424,6 +424,22 @@ function attachAudio(track: RemoteTrack, p: RemoteParticipant) {
 
 export async function joinVoice(channelId: string) {
   if (vget().channelId === channelId && room) return;
+  // invisible people would give themselves away in a live room: say so, and go online first
+  if (useStore.getState().myStatus.status === "invisible") {
+    const { openModal } = await import("./ui");
+    const { goOnline } = await import("./viewing");
+    openModal({
+      kind: "confirm",
+      title: "You're invisible",
+      body: "Joining shows you as Online to everyone, so people know who's in the room. Go online and join?",
+      confirmLabel: "Go online and join",
+      onConfirm: () => {
+        goOnline();
+        return joinVoice(channelId);
+      },
+    });
+    return;
+  }
   if (room) await leaveVoice(false);
   if (!window.isSecureContext) {
     vset({ error: "Voice and video need a secure (https://) connection in a browser. Use the desktop app, or open Llamble through its HTTPS address." });

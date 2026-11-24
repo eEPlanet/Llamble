@@ -54,6 +54,7 @@ export function ChatView({ channel }: { channel: Channel }) {
       <header className="chat-header">
         {channel.kind === "dm" ? <Avatar user={otherUser} size={24} status /> : channel.kind === "watch" ? <span className="muted">💬</span> : <Icon name={party ? "users" : "hash"} size={22} className="muted" />}
         <span className="chat-title">{title}</span>
+        {channel.locked && <span className="muted small" title="Locked: only staff can come in">🔒 Locked</span>}
         {otherUser?.is_bot && <BotTag />}
         {channel.topic && <span className="chat-topic ellipsis">{channel.topic}</span>}
         <div className="grow" />
@@ -78,7 +79,7 @@ export function ChatView({ channel }: { channel: Channel }) {
           </button>
         )}
         {(channel.guild_id || party) && (
-          <button className={"icon-btn" + (memberListOpen ? " on" : "")} title="Member list" onClick={() => useStore.setState({ memberListOpen: !memberListOpen })}>
+          <button className={"icon-btn" + (memberListOpen ? " on" : "")} title="Member list" onClick={() => (localStorage.setItem("llamble.memberList", memberListOpen ? "0" : "1"), useStore.setState({ memberListOpen: !memberListOpen }))}>
             <Icon name="users" size={20} />
           </button>
         )}

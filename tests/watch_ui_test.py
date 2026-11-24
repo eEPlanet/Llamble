@@ -37,5 +37,16 @@ with sync_playwright() as p:
     pg.click(".kind-opt:has-text('Watch Party')")
     pg.screenshot(path=f"{OUT}/watch-create.png")
     pg.keyboard.press("Escape"); pg.wait_for_timeout(300)
+    # a locked chat: staff still get in; others see the locked screen
+    lobby = ok(requests.post(f"{B}/api/guilds/{gid}/channels", headers=H(M), json={"name": "lobby", "kind": "text"}))
+    inv = ok(requests.post(f"{B}/api/guilds/{gid}/invites", headers=H(M), json={"max_uses": 2}))["code"]
+    J = ok(requests.post(B + "/api/auth/register", json={"invite": inv, "username": "jake", "password": "pass-word-123"}))["token"]
+    ok(requests.post(f"{B}/api/channels/{lobby['id']}/lock", headers=H(M), json={"locked": True}))
+    pj = b.new_context(viewport={"width": 1280, "height": 800}).new_page()
+    pj.goto(B + "/"); pj.evaluate(f"localStorage.setItem('llamble.token', '{J}')"); pj.goto(B + "/"); pj.wait_for_timeout(2500)
+    pj.click("button[title='Family']"); pj.wait_for_timeout(500)
+    pj.click(".channel:has-text('lobby')"); pj.wait_for_timeout(800)
+    pj.wait_for_selector(".locked-space")
+    pj.screenshot(path=f"{OUT}/locked-chat.png")
     b.close()
 print("watch ui ok")

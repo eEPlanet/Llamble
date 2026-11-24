@@ -40,6 +40,8 @@ interface State {
   games: Record<string, string>;
   /** people who turned on "Hide what I'm doing" (still online, but not in Right now) */
   activityHidden: Record<string, boolean>;
+  /** who is reading each chat right now (people hiding what they do are left out) */
+  viewers: Record<string, string[]>;
   /** my own status and "hide what I'm doing", saved on my account */
   myStatus: { status: "online" | "idle" | "dnd" | "invisible"; hide_activity: boolean };
   voiceStates: Record<string, VoiceState>;
@@ -90,6 +92,7 @@ export const useStore = create<State>(() => ({
   presences: {},
   games: {},
   activityHidden: {},
+  viewers: {},
   myStatus: { status: "online", hide_activity: false },
   voiceStates: {},
   typing: {},
@@ -107,7 +110,8 @@ export const useStore = create<State>(() => ({
   llambleNews: null,
   boardPrefs: { guilds: {}, llamble_news: true },
   lastChannel: JSON.parse(localStorage.getItem("llamble.lastChannel") || "{}"),
-  memberListOpen: true,
+  // remembered: if you hide the member list, it stays hidden
+  memberListOpen: localStorage.getItem("llamble.memberList") !== "0",
 }));
 
 const set = useStore.setState;
@@ -353,13 +357,15 @@ export function handleEvent(t: string, d: any) {
         if (p.game) games[p.user_id] = p.game;
         if (p.hidden) activityHidden[p.user_id] = true;
       }
+      const viewers: Record<string, string[]> = {};
+      for (const v of d.viewers || []) (viewers[v.channel_id] ||= []).push(v.user_id);
       const myStatus = d.my_status || { status: "online", hide_activity: false };
       presences[d.user.id] = myStatus.status === "invisible" ? "offline" : myStatus.status;
       localStorage.setItem("llamble.status", myStatus.status);
       const voiceStates: Record<string, VoiceState> = {};
       for (const v of d.voice_states) voiceStates[v.user_id] = v;
       if (!st.selectedGuild.startsWith("@") && !st.guilds[st.selectedGuild]) st.selectedGuild = "@home";
-      set({ ...st, me: d.user, ready: true, readStates, presences, games, activityHidden, myStatus, voiceStates, config: d.config, messages: {}, hasMore: {} });
+      set({ ...st, me: d.user, ready: true, readStates, presences, games, activityHidden, myStatus, viewers, voiceStates, config: d.config, messages: {}, hasMore: {} });
       break;
     }
     case "GUILD_CREATE": {
@@ -539,6 +545,10 @@ export function handleEvent(t: string, d: any) {
       const games = { ...s.games };
       if (d.status === "offline") delete games[d.user_id];
       set({ presences: { ...s.presences, [d.user_id]: d.status }, games, activityHidden: { ...s.activityHidden, [d.user_id]: !!d.hidden } });
+      break;
+    }
+    case "VIEWERS_UPDATE": {
+      set({ viewers: { ...s.viewers, [d.channel_id]: d.user_ids } });
       break;
     }
     case "MY_STATUS": {

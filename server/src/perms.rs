@@ -110,8 +110,16 @@ pub async fn require_channel(pool: &SqlitePool, ch: &Channel, user_id: &str, nee
     if p & VIEW == 0 {
         return Err(AppError::not_found());
     }
+    if !open_to(ch, p) {
+        return Err(AppError::forbidden_msg("This space is locked right now."));
+    }
     if p & need != need {
         return Err(AppError::forbidden());
     }
     Ok(p)
+}
+
+/// A locked space can only be opened by staff (Lock spaces / Manage spaces).
+pub fn open_to(ch: &Channel, p: i64) -> bool {
+    !ch.locked || p & (LOCK_SPACES | MANAGE_CHANNELS) != 0
 }

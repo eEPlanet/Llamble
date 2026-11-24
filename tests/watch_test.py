@@ -129,6 +129,23 @@ call("POST", f"/api/channels/{cid}/voice", Et)  # already inside
 call("POST", f"/api/channels/{cid}/lock", A, json={"locked": False})
 call("POST", f"/api/channels/{cid}/voice", St)
 
+# ---- any space can be locked: nobody but staff can open it (mods cleaning up)
+chat = call("POST", f"/api/guilds/{gid}/channels", A, json={"name": "lobby", "kind": "text"})
+call("POST", f"/api/channels/{chat['id']}/messages", Jt, json={"content": "hi"})
+call("POST", f"/api/channels/{chat['id']}/lock", A, json={"locked": True})
+call("GET", f"/api/channels/{chat['id']}/messages", Jt, expect=403)
+call("POST", f"/api/channels/{chat['id']}/messages", Jt, expect=403, json={"content": "let me in"})
+from websocket import create_connection
+import json as _json
+ws = create_connection(B.replace("http", "ws") + "/api/gateway?access_token=" + Jt)
+ready = _json.loads(ws.recv())["d"]; ws.close()
+listed = [c for g in ready["guilds"] for c in g["channels"] if c["id"] == chat["id"]]
+assert listed and listed[0]["locked"] is True, listed  # still listed, shown locked
+call("GET", f"/api/channels/{chat['id']}/messages", A)
+call("POST", f"/api/channels/{chat['id']}/messages", A, json={"content": "tidying up"})
+call("POST", f"/api/channels/{chat['id']}/lock", A, json={"locked": False})
+call("GET", f"/api/channels/{chat['id']}/messages", Jt)
+
 # ---- admin switches
 call("PUT", "/api/admin/settings", A, json={"watch_library": False, "watch_device_stream": False})
 assert call("GET", "/api/watch/library", Dt) == {"on": False, "movies": []}

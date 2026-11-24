@@ -9,6 +9,7 @@ import "./alarms"; // alarms (ringing, local backup timers)
 import { AlarmRinging, AlarmSuggestion } from "./components/Alarms";
 import { connectGateway, disconnectGateway } from "./gateway";
 import { wireNotices } from "./notifications";
+import { wireViewing } from "./viewing";
 import { Login } from "./components/Login";
 import { Shell } from "./components/Shell";
 import { currentChannelId, homeOf, memberName, mentionsMe, onEvent, selectChannel, totalUnreadBadge, useStore } from "./store";
@@ -65,6 +66,7 @@ export default function App() {
   useEffect(() => {
     if (!token) return;
     wireNotices();
+    wireViewing();
     connectGateway();
     initAiWorker();
     startGameDetection();

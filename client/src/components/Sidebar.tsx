@@ -6,11 +6,10 @@ import { sendGateway } from "../gateway";
 import { refreshVoicemailCount, useVoicemailCount, VoicemailInbox } from "./VoiceMessage";
 import { useCalls } from "../calls";
 import { useUnreadNotices } from "../notifications";
-import { PeopleMute } from "./Watch";
 import { can, channelSort, currentChannelId, homeOf, isMessages, isUnread, memberName, notesForMe, openGuildView, openHome, openLibrary, openMessages, openMyProfile, selectChannel, useStore, type MsgTab } from "../store";
 import { P, type Channel } from "../types";
 import { copy, openMenu, openModal, toggleCollapsed, toast, useUI } from "../ui";
-import { canShareScreen, joinVoice, leaveVoice, stopScreenShare, toggleCamera, toggleDeafen, toggleMute, useVoice } from "../voice";
+import { canShareScreen, joinVoice, leaveVoice, stopScreenShare, toggleCamera, toggleDeafen, toggleMute, setPeopleMuted, useVoice } from "../voice";
 import { Avatar, BotTag, Icon } from "./common";
 import { markGuildRead } from "./Shell";
 import { FriendsSidebar, PartiesSidebar } from "./Friends";
@@ -161,8 +160,20 @@ function ChannelRow({ ch }: { ch: Channel }) {
   const mentions = useStore((s) => s.mentions[ch.id] || 0);
   const manage = can(ch.guild_id, P.MANAGE_CHANNELS);
   const voiceStates = useStore((s) => s.voiceStates);
-  const voiceUsers = ch.kind === "voice" || ch.kind === "watch" ? Object.values(voiceStates).filter((v) => v.channel_id === ch.id) : [];
+  const room = ch.kind === "voice" || ch.kind === "watch";
   const inThis = useVoice((v) => v.channelId === ch.id);
+  const friends = useStore((s) => s.friends);
+  const me = useStore((s) => s.me?.id);
+  const readers = useStore((s) => (ch.kind === "text" ? s.viewers[ch.id] : undefined));
+  // who's here: in a room, everyone on the call; in a chat, everyone reading it
+  const allHere = room ? Object.values(voiceStates).filter((v) => v.channel_id === ch.id) : (readers || []).map((u) => ({ user_id: u }) as any);
+  const isFriend = (u: string) => friends[u]?.state === "friend";
+  // in it yourself (the chat is open / you joined the room): everyone, friends first.
+  // Otherwise: your friends by name, and a count for everyone else.
+  const inside = room ? inThis : active;
+  const sorted = [...allHere].sort((a, b) => Number(isFriend(b.user_id)) - Number(isFriend(a.user_id)));
+  const voiceUsers = inside ? sorted : sorted.filter((v) => isFriend(v.user_id) || v.user_id === me);
+  const others = allHere.length - voiceUsers.length;
   const speaking = useVoice((v) => v.speaking);
   const users = useStore((s) => s.users);
 
@@ -174,6 +185,11 @@ function ChannelRow({ ch }: { ch: Channel }) {
     openMenu(e, [
       { label: "Mark As Read", onClick: () => ch.last_message_id && api(`/api/channels/${ch.id}/ack`, { body: { message_id: ch.last_message_id } }), disabled: ch.kind !== "text" },
       { label: "Edit Space", onClick: () => openModal({ kind: "editChannel", channelId: ch.id }), disabled: !manage },
+      {
+        label: ch.locked ? "🔓 Unlock Space" : "🔒 Lock Space",
+        onClick: () => api(`/api/channels/${ch.id}/lock`, { body: { locked: !ch.locked } }).catch((e) => toast(e.message, "error")),
+        disabled: !manage && !can(ch.guild_id, P.LOCK_SPACES),
+      },
       {
         label: "Delete Space",
         danger: true,
@@ -198,7 +214,7 @@ function ChannelRow({ ch }: { ch: Channel }) {
         {unread && !active && <span className="unread-pip" />}
         {ch.kind === "watch" ? <span className="channel-icon channel-emoji-icon">🍿</span> : <Icon name={ch.kind === "voice" ? "speaker" : "hash"} size={18} className="channel-icon" />}
         <span className="ellipsis">{ch.name}</span>
-        {ch.locked && <span title="Locked: nobody new can come in">🔒</span>}
+        {ch.locked && <span title="Locked: only staff can go in">🔒</span>}
         {ch.kind === "voice" && <RecBadge channelId={ch.id} />}
         {mentions > 0 && <span className="badge inline">{mentions}</span>}
         {manage && (
@@ -226,6 +242,11 @@ function ChannelRow({ ch }: { ch: Channel }) {
               {v.deafened && <Icon name="deaf" size={14} className="red" />}
             </div>
           ))}
+        </div>
+      )}
+      {others > 0 && (
+        <div className="here-tag muted small" title={room ? "In this room" : "Reading this chat now"}>
+          {voiceUsers.length ? `+${others} other${others > 1 ? "s" : ""}` : `${others} here`}
         </div>
       )}
     </>
@@ -534,11 +555,7 @@ function VoicePanel() {
       </div>
       {v.error && <div className="voice-error small">{v.error}</div>}
       <ListeningLine channelId={v.channelId} />
-      {channel?.kind === "watch" ? (
-        <div className="voice-panel-btns">
-          <PeopleMute />
-        </div>
-      ) : (
+      {channel?.kind === "watch" ? null : (
       <div className="voice-panel-btns">
         <button className={"vbtn" + (v.camera ? " on" : "")} disabled={!v.canVideo} onClick={toggleCamera} title="Camera">
           <Icon name={v.camera ? "video" : "videoOff"} size={18} /> Video
@@ -551,7 +568,6 @@ function VoicePanel() {
         >
           <Icon name="screen" size={18} /> {v.screen ? "Stop" : "Screen"}
         </button>
-        <PeopleMute small />
       </div>
       )}
     </div>
@@ -601,6 +617,15 @@ function UserPanel() {
       <button className={"icon-btn" + (v.muted ? " red" : "")} title={v.muted ? "Unmute (Ctrl+Shift+M)" : "Mute (Ctrl+Shift+M)"} onClick={toggleMute}>
         <Icon name={v.muted ? "micOff" : "mic"} size={18} />
       </button>
+      {v.channelId && (
+        <button
+          className={"icon-btn" + (v.peopleMuted ? " red" : "")}
+          title={v.peopleMuted ? "Hear people again" : "Mute people: silence everyone else's voices for you (videos, shows and screens keep playing)"}
+          onClick={() => setPeopleMuted(!v.peopleMuted)}
+        >
+          <Icon name={v.peopleMuted ? "usersOff" : "users"} size={18} />
+        </button>
+      )}
       <button className={"icon-btn" + (v.deafened ? " red" : "")} title={v.deafened ? "Undeafen (Ctrl+Shift+D)" : "Deafen (Ctrl+Shift+D)"} onClick={toggleDeafen}>
         <Icon name={v.deafened ? "deaf" : "headphones"} size={18} />
       </button>

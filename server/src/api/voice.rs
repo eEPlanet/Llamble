@@ -87,12 +87,23 @@ pub async fn join(State(state): State<Shared>, auth: AuthUser, Path(cid): Path<S
     }
     // someone added to a DM or party call joins with talk + video, without seeing the chat
     let guest = ch.guild_id.is_none() && is_guest(&cid, &auth.id);
-    let p = if guest { perms::SPEAK | perms::VIDEO } else { require_channel(&state.db, &ch, &auth.id, perms::VIEW | perms::CONNECT).await? };
-    // a locked room: only people already in it, and staff who can lock rooms, get in
+    // a locked room: only people already in it, and staff who can lock spaces, get in
     let already = state.hub.voice.get(&auth.id).map(|v| v.channel_id == cid).unwrap_or(false);
-    if ch.locked && !already && p & (perms::LOCK_SPACES | perms::MANAGE_CHANNELS) == 0 {
-        return Err(AppError::forbidden_msg("This space is locked right now."));
-    }
+    let p = if guest {
+        perms::SPEAK | perms::VIDEO
+    } else {
+        let p = perms::channel_perms(&state.db, &ch, &auth.id).await?;
+        if p & perms::VIEW == 0 {
+            return Err(AppError::not_found());
+        }
+        if !already && !perms::open_to(&ch, p) {
+            return Err(AppError::forbidden_msg("This space is locked right now."));
+        }
+        if p & perms::CONNECT == 0 {
+            return Err(AppError::forbidden());
+        }
+        p
+    };
     // a Watch Party already playing: late joiners come in with their mic held (no barging in)
     let held = ch.kind == "watch" && p & perms::SPEAK != 0 && crate::api::watch::hold_on_join(&state, &cid, &auth.id, p).await;
     let mut sources = vec![];
@@ -433,10 +444,10 @@ pub struct LockReq {
 /// POST /api/channels/{cid}/lock {locked} — staff lock a room on the fly: nobody new comes in.
 pub async fn lock(State(state): State<Shared>, auth: AuthUser, Path(cid): Path<String>, Json(req): Json<LockReq>) -> ApiResult<Json<Value>> {
     let ch = load_channel(&state.db, &cid).await?;
-    if ch.guild_id.is_none() || !["voice", "watch"].contains(&ch.kind.as_str()) {
-        return Err(AppError::bad("only Voice & Video and Watch Party spaces can be locked"));
+    if ch.guild_id.is_none() || ch.kind == "category" {
+        return Err(AppError::bad("only a server's spaces can be locked"));
     }
-    let p = require_channel(&state.db, &ch, &auth.id, perms::VIEW).await?;
+    let p = perms::channel_perms(&state.db, &ch, &auth.id).await?;
     if p & (perms::LOCK_SPACES | perms::MANAGE_CHANNELS) == 0 {
         return Err(AppError::forbidden_msg("you can't lock this space"));
     }

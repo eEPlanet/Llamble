@@ -55,6 +55,40 @@ _, jd = connect(J)
 p = [x for x in jd["presences"] if x["user_id"] == a_id][0]
 assert p["hidden"] is True and p["game"] is None, p
 
+# ---- who's reading a chat: shown to people who can see it; hidden people aren't
+pc.send(json.dumps({"op": "presence", "hide_activity": False}))
+events(jws)
+general = [c for g in jd["guilds"] for c in g["channels"] if c["kind"] == "text"][0]["id"]
+pc.send(json.dumps({"op": "viewing", "channel_id": general}))
+up = [e["d"] for e in events(jws) if e["t"] == "VIEWERS_UPDATE"]
+assert up and up[-1] == {"channel_id": general, "user_ids": [a_id]}, up
+_, jd2 = connect(J)
+assert {"user_id": a_id, "channel_id": general} in jd2["viewers"], jd2["viewers"]
+# chat is live: hiding what you do doesn't take you off it (invisible does)
+pc.send(json.dumps({"op": "presence", "hide_activity": True}))
+up = [e["d"] for e in events(jws) if e["t"] == "VIEWERS_UPDATE"]
+assert up and up[-1]["user_ids"] == [a_id], up
+pc.send(json.dumps({"op": "presence", "hide_activity": False, "status": "invisible"}))
+up = [e["d"] for e in events(jws) if e["t"] == "VIEWERS_UPDATE"]
+assert up and up[-1]["user_ids"] == [], up
+pc.send(json.dumps({"op": "presence", "status": "online"}))
+up = [e["d"] for e in events(jws) if e["t"] == "VIEWERS_UPDATE"]
+assert up and up[-1]["user_ids"] == [a_id], up
+# a chat jake can't see: he hears nothing about it
+g2 = requests.post(f"{B}/api/guilds", headers=H(A), json={"name": "Staff Only"}).json()
+g2 = g2.get("guild") or g2
+secret = requests.post(f"{B}/api/guilds/{g2['id']}/channels", headers=H(A), json={"name": "staff", "kind": "text"}).json()
+pc.send(json.dumps({"op": "viewing", "channel_id": secret["id"]}))
+evj = events(jws)
+assert not [e for e in evj if e["t"] == "VIEWERS_UPDATE" and e["d"]["channel_id"] == secret["id"]], evj
+_, jd3 = connect(J)
+assert all(v["channel_id"] != secret["id"] for v in jd3["viewers"]), jd3["viewers"]
+# closing the chat (or disconnecting) clears it
+pc.send(json.dumps({"op": "viewing", "channel_id": None}))
+time.sleep(0.5)
+_, jd4 = connect(J)
+assert jd4["viewers"] == [], jd4["viewers"]
+
 # an Opus/WebM voice recording stays audio and can be a voice message
 webm = bytes([0x1A, 0x45, 0xDF, 0xA3]) + b"\x00" * 200
 f = requests.post(B + "/api/files", headers=H(A), files={"file": ("Voice message.webm", webm, "audio/webm")}).json()
