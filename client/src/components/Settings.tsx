@@ -1,4 +1,5 @@
 import { canReplay, setReplayPrefs, useReplay, type ReplayPrefs } from "../replay";
+import { startTutorial, useTour } from "../tutorial";
 import type { RecQuality } from "../nativerec";
 import { GamesSettings } from "./Games";
 import { ScheduleSettings } from "./Alarms";
@@ -616,6 +617,7 @@ export function UserSettings({ tab: initial }: { tab?: string }) {
         { id: "aimodel", label: "AI Model", hidden: me.instance_role !== "master" },
         { id: "remote", label: "Remote Access", hidden: me.instance_role !== "master" },
         { id: "end-section", label: "", section: true },
+        { id: "tutorial", label: "Tutorial" },
         { id: "about", label: "About" },
         { id: "logout", label: "Log Out", danger: true },
       ]}
@@ -649,6 +651,7 @@ export function UserSettings({ tab: initial }: { tab?: string }) {
         </div>
       )}
       {tab === "about" && <About />}
+      {tab === "tutorial" && <TutorialTab />}
       {tab === "logout" && (
         <div>
           <h2>Log out</h2>
@@ -2673,6 +2676,26 @@ function Appearance() {
       {(theme !== "navy" || accent !== DEFAULT_ACCENT) && (
         <button className="btn" style={{ marginTop: 18 }} onClick={() => { resetAccent(); applyTheme("navy"); setTheme("navy"); setAccent(DEFAULT_ACCENT); }}>
           Back to the Llamble colors
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** Take the tour again: the real app with a practice server, nothing reaches anyone. */
+function TutorialTab() {
+  const active = useTour((t) => t.active);
+  return (
+    <div>
+      <h2>Tutorial</h2>
+      <p className="muted">
+        A short tour of Llamble with a practice server: pretend people, messages and rooms. It covers what you can do here, including any staff tools you have. Nothing you do in it reaches anyone.
+      </p>
+      {active ? (
+        <p className="muted">You're in the tutorial now.</p>
+      ) : (
+        <button className="btn primary" onClick={() => startTutorial(false)}>
+          Start the tutorial
         </button>
       )}
     </div>

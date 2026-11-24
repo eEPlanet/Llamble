@@ -217,7 +217,7 @@ function ChannelList({ guildId }: { guildId: string }) {
         </div>
         {TYPE_GROUPS.map((t) => {
           const kids = loose.filter((c) => c.kind === t.kind).sort((a, b) => a.position - b.position);
-          return kids.length ? section("type:" + t.kind, t.label, kids, null) : null;
+          return kids.length ? section(guildId + ":type:" + t.kind, t.label, kids, null) : null;
         })}
         {/* anything of a kind without its own heading */}
         {loose.filter((c) => !TYPE_GROUPS.some((t) => t.kind === c.kind)).map((c) => (
@@ -353,6 +353,7 @@ function ChannelRow({ ch }: { ch: Channel }) {
     <>
       <div
         className={"channel" + (active ? " active" : "") + (unread ? " unread" : "")}
+        data-cid={ch.id}
         onClick={onClick}
         onContextMenu={menu}
         draggable={manage}
@@ -661,7 +662,7 @@ function DmRow({ ch, active, other }: { ch: Channel; active: boolean; other: any
   const mentions = useStore((s) => s.mentions[ch.id] || 0);
   const user = useStore((s) => (other ? s.users[other.id] || other : undefined));
   return (
-    <div className={"dm-row" + (active ? " active" : "") + (unread ? " unread" : "")} onClick={() => selectChannel("@me", ch.id)} onContextMenu={(e) => user && userMenu(e, user.id, null)}>
+    <div className={"dm-row" + (active ? " active" : "") + (unread ? " unread" : "")} data-cid={ch.id} onClick={() => selectChannel("@me", ch.id)} onContextMenu={(e) => user && userMenu(e, user.id, null)}>
       <Avatar user={user} size={32} status />
       <span className="ellipsis">{user?.display_name ?? "Unknown"}</span>
       {user?.is_bot && <BotTag />}

@@ -38,6 +38,7 @@ export function MemberList({ guildId }: { guildId: string }) {
             <div
               key={m.user.id}
               className={"member" + (online(m) ? "" : " offline")}
+              data-uid={m.user.id}
               onClick={() => openModal({ kind: "profile", userId: m.user.id, guildId })}
               onContextMenu={(e) => userMenu(e, m.user.id, guildId)}
             >

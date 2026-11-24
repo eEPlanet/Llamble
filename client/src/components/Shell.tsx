@@ -23,6 +23,8 @@ import { Modals } from "./Modals";
 import { notifyResetRequest } from "./Recovery";
 import { Sidebar } from "./Sidebar";
 import { VoiceView } from "./VoiceView";
+import { PracticeVoice, PracticeWatch, TutorialGuide } from "./Tutorial";
+import { isPracticeRoom } from "../tutorial";
 import { Library } from "./Library";
 import { MyProfile } from "./Profile";
 import { FriendProfile, PartiesEmpty, PartyMembers, PartyView } from "./Friends";
@@ -132,6 +134,8 @@ export function Shell() {
               <LockedSpace channel={channel} />
             ) : invisibleGate ? (
               <InvisibleGate channel={channel} />
+            ) : isPracticeRoom(channel.id) ? (
+              channel.kind === "watch" ? <PracticeWatch channel={channel} /> : <PracticeVoice channel={channel} />
             ) : channel.kind === "voice" ? (
               <VoiceView channel={channel} />
             ) : channel.kind === "watch" ? (
@@ -167,6 +171,7 @@ export function Shell() {
       <ShowPrompts />
       <RecordingBar />
       <Lightbox />
+      <TutorialGuide />
     </div>
   );
 }
@@ -248,6 +253,7 @@ function GuildBar() {
         <span className={"guild-pill" + (inMessages ? " active" : msgCount ? " unread" : "")} />
         <button
           className={"guild-btn dms" + (inMessages ? " active" : "") + (msgCount ? " has-unread" : "")}
+          data-tut="talk"
           onClick={() => openMessages()}
           title={msgCount ? `Talk · ${msgCount} new` : "Talk: calls and chats with people, parties and voicemail"}
         >
@@ -259,6 +265,7 @@ function GuildBar() {
         <span className={"guild-pill" + (selected === "@friends" ? " active" : requests ? " unread" : "")} />
         <button
           className={"guild-btn dms" + (selected === "@friends" ? " active" : "")}
+          data-tut="friends"
           onClick={() => openFriend(useStore.getState().selectedFriend)}
           title={requests ? `${peopleName} · ${requests} new request${requests > 1 ? "s" : ""}` : peopleName}
         >
@@ -276,6 +283,7 @@ function GuildBar() {
             <span className={"guild-pill" + (selected === id ? " active" : u?.unread ? " unread" : "")} />
             <button
               className={"guild-btn" + (selected === id ? " active" : "") + (g.icon_file_id ? " has-img" : "")}
+              data-gid={id}
               title={g.name}
               onClick={() => openGuildView(id)}
               onContextMenu={(e) =>

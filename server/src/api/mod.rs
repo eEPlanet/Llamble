@@ -47,6 +47,7 @@ pub fn router(state: Shared) -> Router<Shared> {
         .route("/api/auth/login", post(auth::login))
         .route("/api/auth/logout", post(auth::logout))
         .route("/api/users/@me", get(auth::me).patch(auth::update_me).delete(delete_me))
+        .route("/api/users/@me/tutorial", post(tutorial_seen))
         .route("/api/users/@me/profile", patch(social::edit_profile))
         .route("/api/users/{uid}/profile", get(social::get_profile))
         .route("/api/users/@me/sessions", get(auth::sessions))
@@ -288,6 +289,12 @@ async fn setup(State(state): State<Shared>, Json(req): Json<SetupReq>) -> ApiRes
     let recovery_code = auth::new_recovery_code(&state, &id).await?;
     let user = crate::models::get_user(&state.db, &id).await?;
     Ok(Json(json!({ "token": token, "user": user, "guild_id": guild_id, "recovery_code": recovery_code })))
+}
+
+/// The tutorial was finished or skipped on one of this person's devices: don't offer it again.
+async fn tutorial_seen(State(state): State<Shared>, auth: AuthUser) -> ApiResult<Json<Value>> {
+    sqlx::query("UPDATE users SET tutorial_at = ? WHERE id = ?").bind(crate::error::now_ms()).bind(&auth.id).execute(&state.db).await?;
+    Ok(Json(json!({ "ok": true })))
 }
 
 async fn invite_redirect(Path(code): Path<String>) -> axum::response::Redirect {

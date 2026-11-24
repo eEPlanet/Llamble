@@ -16,7 +16,7 @@ run() { # name, extra env..., -- test args...
   local name=$1; shift; local envs=(); while [ "$1" != "--" ]; do envs+=("$1"); shift; done; shift
   pkill -f llamble-server 2>/dev/null; pkill -f fake_livekit.py; sleep 0.8
   local D=$(mktemp -d)
-  env LLAMBLE_DATA=$D LLAMBLE_BIND=127.0.0.1:8099 LLAMBLE_ACME_STAGING=1 LLAMBLE_LIVEKIT_BIN=/nonexistent "${envs[@]}" "$BIN" >$D/log 2>&1 &
+  env LLAMBLE_SKIP_TUTORIAL=1 LLAMBLE_DATA=$D LLAMBLE_BIND=127.0.0.1:8099 LLAMBLE_ACME_STAGING=1 LLAMBLE_LIVEKIT_BIN=/nonexistent "${envs[@]}" "$BIN" >$D/log 2>&1 &
   local P=$!
   for _ in $(seq 1 60); do curl -sf -o /dev/null http://127.0.0.1:8099/api/info && break; sleep 0.25; done
   local INV=$(cat $D/ADMIN_INVITE.txt 2>/dev/null)

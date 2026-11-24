@@ -233,6 +233,7 @@ function FriendRow({
   return (
     <div
       className={"dm-row" + (active ? " active" : "")}
+      data-uid={f.user.id}
       onClick={() => openFriend(f.user.id)}
       onContextMenu={(e) => openMenu(e, friendMenu(f))}
     >

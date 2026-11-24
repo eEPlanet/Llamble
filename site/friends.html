@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Friends and parties · Llamble</title>
+<meta name="description" content="See who&#x27;s around and what they&#x27;re up to, then talk, call or bring them together." />
+<link rel="icon" href="favicon.png" />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <a class="brand" href="./"><img src="icon.png" alt="" />Llamble</a>
+    <nav>
+      <a href="./#tour">Tour</a>
+      <a href="./#download">Download</a>
+      <a href="./#web">Web app</a>
+      <a href="./#server">Run a server</a>
+      <a href="https://github.com/eEPlanet/Llamble">GitHub</a>
+    </nav>
+  </header>
+  <div class="page-hero">
+    <a class="back" href="./#tour">← Back to the tour</a>
+    <h1>Friends and parties</h1>
+    <p class="lead">See who&#x27;s around and what they&#x27;re up to, then talk, call or bring them together.</p>
+  </div>
+  <video class="shot" src="clips/friends.mp4" poster="clips/friends.webp" muted loop playsinline preload="none" aria-label="Accepting a friend request and opening their page"></video>
+</div>
+<section>
+  <div class="wrap">
+    <div class="detail">
+      <div class="card"><h3>👋 Friends</h3><ul><li>Add people by username; they accept</li><li>See who&#x27;s online and what game they&#x27;re playing</li><li>Favorites at the top, and private notes only you see</li><li>Hide what you&#x27;re doing, or go invisible</li></ul></div>
+      <div class="card"><h3>🎉 Parties</h3><ul><li>A small group with its own chat and voice</li><li>Start one from a friend&#x27;s page or a call</li><li>Invite a whole party to a server at once</li></ul></div>
+      <div class="card"><h3>💌 Inviting people</h3><ul><li>Invite to Llamble: a one-use link that lasts 7 days</li><li>Invites can make you friends right away</li><li>Admins can turn member invites off</li></ul></div>
+      <div class="card"><h3>💬 Talk</h3><ul><li>Direct messages, parties and voicemail in one place</li><li>Message or call from anyone&#x27;s name</li></ul></div>
+    </div>
+    <div style="margin-top:32px"><video class="shot" src="clips/dm.mp4" poster="clips/dm.webp" muted loop playsinline preload="none" aria-label="Sending a direct message and getting a reply"></video></div>
+  </div>
+</section>
+<section>
+  <div class="wrap">
+    <h2>More about Llamble</h2>
+    <div class="next-pages">
+      <a href="chat.html">Chat</a>
+      <a href="voice.html">Voice &amp; video</a>
+      <a href="watch.html">Watch parties</a>
+      <a href="calls.html">Calls</a>
+      <a href="servers.html">Servers</a>
+      <a href="families.html">Families</a>
+      <a href="ai.html">AI</a>
+    </div>
+    <p style="margin-top:26px"><a class="btn primary" href="./#download">Get Llamble</a> <a class="btn ghost" href="./#server">Run your own server</a></p>
+  </div>
+</section>
+<div class="wrap">
+  <footer>
+    <span>Llamble · free to self-host · <a href="https://github.com/eEPlanet/Llamble">github.com/eEPlanet/Llamble</a></span>
+    <span><a href="https://github.com/eEPlanet/Llamble/issues">Report a problem</a></span>
+  </footer>
+</div>
+<script>
+  (() => {
+    const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const vids = document.querySelectorAll("video.shot");
+    if (still) return vids.forEach((v) => (v.controls = true));
+    const io = new IntersectionObserver((es) => es.forEach((e) => (e.isIntersecting ? e.target.play().catch(() => {}) : e.target.pause())), { threshold: 0.35 });
+    vids.forEach((v) => io.observe(v));
+  })();
+</script>
+</body>
+</html>

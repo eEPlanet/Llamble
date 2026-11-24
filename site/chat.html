@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Chat · Llamble</title>
+<meta name="description" content="Servers with spaces for every kind of talk, and direct messages for everything else. It all lives on a server you run." />
+<link rel="icon" href="favicon.png" />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <a class="brand" href="./"><img src="icon.png" alt="" />Llamble</a>
+    <nav>
+      <a href="./#tour">Tour</a>
+      <a href="./#download">Download</a>
+      <a href="./#web">Web app</a>
+      <a href="./#server">Run a server</a>
+      <a href="https://github.com/eEPlanet/Llamble">GitHub</a>
+    </nav>
+  </header>
+  <div class="page-hero">
+    <a class="back" href="./#tour">← Back to the tour</a>
+    <h1>Chat</h1>
+    <p class="lead">Servers with spaces for every kind of talk, and direct messages for everything else. It all lives on a server you run.</p>
+  </div>
+  <video class="shot" src="clips/chat.mp4" poster="clips/chat.webp" muted loop playsinline preload="none" aria-label="Typing a message in a chat; a friend answers and gets a reaction"></video>
+</div>
+<section>
+  <div class="wrap">
+    <div class="detail">
+      <div class="card"><h3>💬 Servers and spaces</h3><ul><li>A server is a group with its own people, spaces and rules</li><li>Spaces group themselves by type: Chat, Voice &amp; Video, Watch</li><li>Make your own groups and drag spaces between them</li><li>Each server has a Board: sticky notes, highlights and news</li></ul></div>
+      <div class="card"><h3>✍️ Messages</h3><ul><li>Replies, reactions, editing and @mentions</li><li>Pictures, videos and files up to the size your server allows</li><li>GIFs, voice messages and search</li><li>Share any message to another chat</li></ul></div>
+      <div class="card"><h3>🧹 Keeping it tidy</h3><ul><li>Staff can delete messages, or many at once</li><li>Spaces can clear old messages automatically after a set number of days</li><li>Lock a space so only staff can go in</li></ul></div>
+      <div class="card"><h3>📱 Everywhere</h3><ul><li>Windows app, Android app, or any browser</li><li>On phones, one panel at a time, made for thumbs</li><li>Everything is stored on your server, not ours</li></ul></div>
+    </div>
+
+  </div>
+</section>
+<section>
+  <div class="wrap">
+    <h2>More about Llamble</h2>
+    <div class="next-pages">
+      <a href="voice.html">Voice &amp; video</a>
+      <a href="watch.html">Watch parties</a>
+      <a href="friends.html">Friends</a>
+      <a href="calls.html">Calls</a>
+      <a href="servers.html">Servers</a>
+      <a href="families.html">Families</a>
+      <a href="ai.html">AI</a>
+    </div>
+    <p style="margin-top:26px"><a class="btn primary" href="./#download">Get Llamble</a> <a class="btn ghost" href="./#server">Run your own server</a></p>
+  </div>
+</section>
+<div class="wrap">
+  <footer>
+    <span>Llamble · free to self-host · <a href="https://github.com/eEPlanet/Llamble">github.com/eEPlanet/Llamble</a></span>
+    <span><a href="https://github.com/eEPlanet/Llamble/issues">Report a problem</a></span>
+  </footer>
+</div>
+<script>
+  (() => {
+    const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const vids = document.querySelectorAll("video.shot");
+    if (still) return vids.forEach((v) => (v.controls = true));
+    const io = new IntersectionObserver((es) => es.forEach((e) => (e.isIntersecting ? e.target.play().catch(() => {}) : e.target.pause())), { threshold: 0.35 });
+    vids.forEach((v) => io.observe(v));
+  })();
+</script>
+</body>
+</html>

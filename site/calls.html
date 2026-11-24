@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Calls and voicemail · Llamble</title>
+<meta name="description" content="Calls ring like a phone, and nobody misses a message." />
+<link rel="icon" href="favicon.png" />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <a class="brand" href="./"><img src="icon.png" alt="" />Llamble</a>
+    <nav>
+      <a href="./#tour">Tour</a>
+      <a href="./#download">Download</a>
+      <a href="./#web">Web app</a>
+      <a href="./#server">Run a server</a>
+      <a href="https://github.com/eEPlanet/Llamble">GitHub</a>
+    </nav>
+  </header>
+  <div class="page-hero">
+    <a class="back" href="./#tour">← Back to the tour</a>
+    <h1>Calls and voicemail</h1>
+    <p class="lead">Calls ring like a phone, and nobody misses a message.</p>
+  </div>
+  <img class="shot" src="screenshots/voicemail-greeting.webp" alt="Choosing a voicemail greeting" />
+</div>
+<section>
+  <div class="wrap">
+    <div class="detail">
+      <div class="card"><h3>📞 Calls</h3><ul><li>Ringing with a full-screen Accept and Decline</li><li>Missed calls show up so you can call back</li><li>Add more people to make a group call</li><li>Android rings even when the app is closed</li></ul></div>
+      <div class="card"><h3>📮 Voicemail</h3><ul><li>Callers can leave a voicemail after your greeting</li><li>Greetings: a standard one, your words read by a server voice, or record your own</li><li>Voicemails get written out as text when the server&#x27;s speech model is on</li></ul></div>
+      <div class="card"><h3>⚡ Urgent messages</h3><ul><li>Mark a voice message urgent when it can&#x27;t wait</li></ul></div>
+    </div>
+
+  </div>
+</section>
+<section>
+  <div class="wrap">
+    <h2>More about Llamble</h2>
+    <div class="next-pages">
+      <a href="chat.html">Chat</a>
+      <a href="voice.html">Voice &amp; video</a>
+      <a href="watch.html">Watch parties</a>
+      <a href="friends.html">Friends</a>
+      <a href="servers.html">Servers</a>
+      <a href="families.html">Families</a>
+      <a href="ai.html">AI</a>
+    </div>
+    <p style="margin-top:26px"><a class="btn primary" href="./#download">Get Llamble</a> <a class="btn ghost" href="./#server">Run your own server</a></p>
+  </div>
+</section>
+<div class="wrap">
+  <footer>
+    <span>Llamble · free to self-host · <a href="https://github.com/eEPlanet/Llamble">github.com/eEPlanet/Llamble</a></span>
+    <span><a href="https://github.com/eEPlanet/Llamble/issues">Report a problem</a></span>
+  </footer>
+</div>
+<script>
+  (() => {
+    const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const vids = document.querySelectorAll("video.shot");
+    if (still) return vids.forEach((v) => (v.controls = true));
+    const io = new IntersectionObserver((es) => es.forEach((e) => (e.isIntersecting ? e.target.play().catch(() => {}) : e.target.pause())), { threshold: 0.35 });
+    vids.forEach((v) => io.observe(v));
+  })();
+</script>
+</body>
+</html>

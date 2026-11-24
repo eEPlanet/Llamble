@@ -422,7 +422,11 @@ function attachAudio(track: RemoteTrack, p: RemoteParticipant) {
   }
 }
 
+/** The tutorial's practice rooms: joining one is handled by the tutorial, not a real call. */
+export const voiceHooks: { join?: (channelId: string) => boolean; leave?: () => void } = {};
+
 export async function joinVoice(channelId: string) {
+  if (voiceHooks.join?.(channelId)) return;
   if (vget().channelId === channelId && room) return;
   // invisible people would give themselves away in a live room: say so, and go online first
   if (useStore.getState().myStatus.status === "invisible") {
@@ -618,6 +622,7 @@ async function connect(channelId: string, rejoining: boolean) {
 }
 
 export async function leaveVoice(notify = true) {
+  voiceHooks.leave?.();
   wanted = null;
   // the phone stops capturing its screen too
   if (appSound) {

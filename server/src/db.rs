@@ -253,6 +253,13 @@ async fn migrate(pool: &SqlitePool) -> anyhow::Result<()> {
     // news: instance "news writers"; per-person show/hide for Llamble news on Home
     add_column(pool, "users", "news_writer", "INTEGER NOT NULL DEFAULT 0").await?;
     add_column(pool, "users", "board_llamble_news", "INTEGER NOT NULL DEFAULT 1").await?;
+    // the tutorial: when this account finished or skipped it (empty = not yet). Accounts that
+    // existed before the tutorial count as seen, so it's offered to new accounts only
+    let had: Vec<String> = sqlx::query_scalar("SELECT name FROM pragma_table_info('users')").fetch_all(pool).await?;
+    if !had.iter().any(|c| c == "tutorial_at") {
+        add_column(pool, "users", "tutorial_at", "INTEGER").await?;
+        sqlx::query("UPDATE users SET tutorial_at = created_at").execute(pool).await?;
+    }
     // "Add highlights" became a permission: give it once to everyone who already had it
     // (as an @everyone default), so nothing changes for existing servers
     let done: Option<String> = sqlx::query_scalar("SELECT value FROM settings WHERE key = 'migr_add_highlights'").fetch_optional(pool).await.unwrap_or(None);

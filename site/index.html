@@ -9,73 +9,7 @@
 <meta property="og:title" content="Llamble" />
 <meta property="og:description" content="Your own place to hang out. Chat, voice, shows and more, on a server you run." />
 <meta property="og:image" content="logo.jpg" />
-<style>
-  :root {
-    --bg: #192233; --bg2: #212b3e; --bg3: #2a3550; --line: #34405a;
-    --text: #eef1f7; --muted: #9aa4b8; --orange: #f2792b; --blue: #4f7cff; --green: #3ccf8e;
-  }
-  * { box-sizing: border-box; }
-  html { scroll-behavior: smooth; }
-  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-  a { color: var(--blue); }
-  .wrap { max-width: 980px; margin: 0 auto; padding: 0 24px; }
-  header.top { display: flex; align-items: center; justify-content: space-between; padding: 18px 0; }
-  header.top .brand { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 20px; color: var(--text); text-decoration: none; }
-  header.top .brand img { width: 34px; height: 34px; }
-  header.top nav a { color: var(--muted); text-decoration: none; margin-left: 22px; font-size: 15px; }
-  header.top nav a:hover { color: var(--text); }
-
-  .hero { text-align: center; padding: 30px 0 60px; }
-  .hero img.logo { width: min(460px, 90%); border-radius: 18px; -webkit-mask-image: radial-gradient(ellipse 72% 72% at 50% 50%, #000 70%, transparent 100%); mask-image: radial-gradient(ellipse 72% 72% at 50% 50%, #000 70%, transparent 100%); }
-  .hero h1 { font-size: clamp(28px, 5vw, 44px); line-height: 1.15; margin: 18px 0 10px; letter-spacing: -0.5px; }
-  .hero p.lead { color: var(--muted); font-size: 19px; max-width: 640px; margin: 0 auto 28px; }
-
-  .btn { display: inline-flex; align-items: center; gap: 10px; padding: 14px 24px; border-radius: 12px; font-weight: 700; text-decoration: none; font-size: 17px; border: 1px solid transparent; transition: transform .1s, background .15s; }
-  .btn:hover { transform: translateY(-1px); }
-  .btn.primary { background: var(--orange); color: #fff; }
-  .btn.primary:hover { background: #ff8a3d; }
-  .btn.ghost { background: var(--bg2); color: var(--text); border-color: var(--line); }
-  .btn.ghost:hover { background: var(--bg3); }
-  .btn svg { width: 22px; height: 22px; }
-  .version { color: var(--muted); font-size: 14px; margin-top: 10px; }
-
-  section { padding: 56px 0; border-top: 1px solid var(--line); }
-  section h2 { font-size: 30px; margin: 0 0 6px; }
-  section .sub { color: var(--muted); margin: 0 0 26px; font-size: 17px; }
-  .step-tag { display: inline-block; font-size: 13px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; color: var(--orange); margin-bottom: 6px; }
-
-  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
-  .card { background: var(--bg2); border: 1px solid var(--line); border-radius: 14px; padding: 20px; }
-  .card h3 { margin: 6px 0 6px; font-size: 18px; }
-  .card p { margin: 0; color: var(--muted); font-size: 15px; }
-  .card .ico { font-size: 26px; }
-
-  .split { display: grid; grid-template-columns: 1.1fr 1fr; gap: 28px; align-items: center; }
-  @media (max-width: 760px) { .split { grid-template-columns: 1fr; } header.top nav { display: none; } }
-  ol.steps { padding-left: 20px; margin: 0; }
-  ol.steps li { margin: 6px 0; }
-  .note { background: var(--bg2); border: 1px solid var(--line); border-left: 4px solid var(--blue); border-radius: 10px; padding: 14px 16px; color: var(--muted); font-size: 15px; }
-
-  .code { position: relative; background: #0f131c; border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; font: 13.5px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; color: #d6deeb; white-space: pre; overflow-x: auto; }
-  .code button { position: absolute; top: 10px; right: 10px; background: var(--bg3); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 5px 12px; font-size: 13px; cursor: pointer; }
-  .code button:hover { background: var(--line); }
-  .tabs { display: flex; gap: 6px; margin-bottom: 10px; }
-  .tabs button { background: transparent; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 6px 16px; font-weight: 600; cursor: pointer; }
-  .tabs button.on { background: var(--bg3); color: var(--text); }
-
-  .shot { width: 100%; border-radius: 14px; border: 1px solid var(--line); box-shadow: 0 18px 50px rgba(0,0,0,.35); display: block; }
-  .tour { display: grid; gap: 56px; }
-  .tour .row { display: grid; grid-template-columns: 1.45fr 1fr; gap: 32px; align-items: center; }
-  .tour .row.flip { grid-template-columns: 1fr 1.45fr; }
-  .tour .row.flip .txt { order: -1; }
-  .tour h3 { font-size: 24px; margin: 0 0 8px; }
-  .tour p { color: var(--muted); margin: 0 0 8px; }
-  .phones { display: flex; gap: 18px; justify-content: center; flex-wrap: wrap; }
-  .phones img { width: 230px; border-radius: 26px; border: 1px solid var(--line); box-shadow: 0 18px 50px rgba(0,0,0,.35); }
-  @media (max-width: 760px) { .tour .row, .tour .row.flip { grid-template-columns: 1fr; } .tour .row.flip .txt { order: 0; } }
-  footer { border-top: 1px solid var(--line); padding: 30px 0 50px; color: var(--muted); font-size: 14px; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
-  footer a { color: var(--muted); }
-</style>
+<link rel="stylesheet" href="style.css" />
 </head>
 <body>
 <div class="wrap">
@@ -104,31 +38,47 @@
   <img class="shot" src="screenshots/chat.webp" alt="A chat in Llamble: messages, a shared picture, reactions and the list of spaces" style="margin-bottom:60px" />
 </div>
 <section id="tour">
-  <div class="wrap tour">
-    <div class="row">
-      <img class="shot" src="screenshots/home.webp" alt="The Home board" loading="lazy" />
-      <div class="txt"><h3>Everything at a glance</h3><p>Home shows who's in a room right now, your notifications, news and notes from all your servers. One tap to join.</p></div>
-    </div>
-    <div class="row flip">
-      <img class="shot" src="screenshots/watch-party.webp" alt="A Watch Party room with its queue" loading="lazy" />
-      <div class="txt"><h3>Watch parties</h3><p>A shared player that stays in sync for everyone, with voice and chat beside it. Queue YouTube, links and streams, movies uploaded to your server, your own Jellyfin library, or a video from your device. Posters and subtitles included.</p></div>
-    </div>
-    <div class="row">
-      <img class="shot" src="screenshots/friends.webp" alt="A friend's page" loading="lazy" />
-      <div class="txt"><h3>Friends and parties</h3><p>See who's online and what they're doing, jump into their room, call them, or start a party: a small group with its own chat and voice.</p></div>
-    </div>
-    <div class="row flip">
-      <img class="shot" src="screenshots/voicemail-greeting.webp" alt="Choosing a voicemail greeting" loading="lazy" />
-      <div class="txt"><h3>Calls that ring, and voicemail</h3><p>Calls ring like a phone. Miss one and they can leave a voicemail after your greeting: record your own, or have your words read by one of your server's voices.</p></div>
-    </div>
-    <div class="row">
-      <img class="shot" src="screenshots/open-servers.webp" alt="Open servers you can find and join" loading="lazy" />
-      <div class="txt"><h3>Find your people</h3><p>Servers can be open, take requests, or stay invite-only. Open ones are listed so anyone on your Llamble can look around and join.</p></div>
-    </div>
-    <div class="phones">
+  <div class="wrap">
+    <h2>Take a look</h2>
+    <p class="sub">Clips from the app, using the practice server from the built-in tutorial.</p>
+    <div class="tour">
+      <div class="row">
+        <video class="shot" src="clips/chat.mp4" poster="clips/chat.webp" muted loop playsinline preload="none" aria-label="Typing a message in a chat; a friend answers and gets a reaction"></video>
+        <div class="txt"><h3>Chat that feels like your place</h3><p>Spaces for every kind of talk, grouped the way you want. Replies, reactions, pictures, GIFs, voice messages and search, in servers you run.</p><a class="more" href="chat.html">Learn more →</a></div>
+      </div>
+      <div class="row flip">
+        <img class="shot" src="screenshots/home.webp" alt="The Home board" loading="lazy" />
+        <div class="txt"><h3>Everything at a glance</h3><p>Home shows who's in a room right now, your notifications, news and notes from all your servers. One tap to join.</p></div>
+      </div>
+      <div class="row">
+        <video class="shot" src="clips/voice.mp4" poster="clips/voice.webp" muted loop playsinline preload="none" aria-label="Joining a voice room: the people talking light up"></video>
+        <div class="txt"><h3>Voice and video rooms</h3><p>Drop into a room and talk. Cameras, screen sharing with sound, push-to-talk, noise suppression, and sound quality up to studio level.</p><a class="more" href="voice.html">Learn more →</a></div>
+      </div>
+      <div class="row flip">
+        <img class="shot" src="screenshots/watch-party.webp" alt="A Watch Party room with its queue" loading="lazy" />
+        <div class="txt"><h3>Watch parties</h3><p>A shared player that stays in sync for everyone, with voice and chat beside it. Queue YouTube, links and streams, movies uploaded to your server, your own Jellyfin library, or a video from your device. Posters and subtitles included.</p><a class="more" href="watch.html">Learn more →</a></div>
+      </div>
+      <div class="row">
+        <video class="shot" src="clips/friends.mp4" poster="clips/friends.webp" muted loop playsinline preload="none" aria-label="Accepting a friend request and opening their page"></video>
+        <div class="txt"><h3>Friends and parties</h3><p>See who's online and what they're doing, jump into their room, call them, or start a party: a small group with its own chat and voice.</p><a class="more" href="friends.html">Learn more →</a></div>
+      </div>
+      <div class="row flip">
+        <img class="shot" src="screenshots/voicemail-greeting.webp" alt="Choosing a voicemail greeting" loading="lazy" />
+        <div class="txt"><h3>Calls that ring, and voicemail</h3><p>Calls ring like a phone. Miss one and they can leave a voicemail after your greeting: record your own, or have your words read by one of your server's voices.</p><a class="more" href="calls.html">Learn more →</a></div>
+      </div>
+      <div class="row">
+        <img class="shot" src="screenshots/open-servers.webp" alt="Open servers you can find and join" loading="lazy" />
+        <div class="txt"><h3>Find your people</h3><p>Servers can be open, let people look around first, take requests, or stay invite-only. Open ones are listed so anyone on your Llamble can look around and join.</p><a class="more" href="servers.html">Learn more →</a></div>
+      </div>
+      <div class="row flip">
+        <video class="shot" src="clips/tutorial.mp4" poster="clips/tutorial.webp" muted loop playsinline preload="none" aria-label="The built-in tutorial: a welcome card, then a guide pointing at each part of the app"></video>
+        <div class="txt"><h3>A tour for everyone new</h3><p>New accounts get a short tour of the real app with a practice server: pretend people, messages and rooms, so nothing reaches anyone. It shows each person what they can do here, staff tools included, and can be replayed any time.</p></div>
+      </div>
+      <div class="phones">
       <img src="screenshots/phone-spaces.webp" alt="Spaces on a phone" loading="lazy" />
       <img src="screenshots/phone-chat.webp" alt="A chat on a phone" loading="lazy" />
       <img src="screenshots/phone-home.webp" alt="Home on a phone" loading="lazy" />
+    </div>
     </div>
   </div>
 </section>
@@ -177,14 +127,14 @@
     <h2>What's inside</h2>
     <p class="sub">Everything you'd expect from a chat app, on hardware you control.</p>
     <div class="cards">
-      <div class="card"><div class="ico">💬</div><h3>Servers &amp; spaces</h3><p>Chat, Voice &amp; Video and Watch Party spaces, with your own groups. DMs, replies, reactions, GIFs, voice messages, search, roles and permissions.</p></div>
-      <div class="card"><div class="ico">🎙️</div><h3>Voice, video, screens</h3><p>High-quality rooms and calls, cameras and screen sharing with sound, push-to-talk and noise suppression.</p></div>
-      <div class="card"><div class="ico">🍿</div><h3>Watch parties</h3><p>Watch together in sync: YouTube, links, your own movie library or Jellyfin, with voice and chat.</p></div>
+      <div class="card"><div class="ico">💬</div><h3><a href="chat.html" style="color:inherit;text-decoration:none">Servers &amp; spaces</a></h3><p>Chat, Voice &amp; Video and Watch Party spaces, with your own groups. DMs, replies, reactions, GIFs, voice messages, search, roles and permissions.</p></div>
+      <div class="card"><div class="ico">🎙️</div><h3><a href="voice.html" style="color:inherit;text-decoration:none">Voice, video, screens</a></h3><p>High-quality rooms and calls, cameras and screen sharing with sound, push-to-talk and noise suppression.</p></div>
+      <div class="card"><div class="ico">🍿</div><h3><a href="watch.html" style="color:inherit;text-decoration:none">Watch parties</a></h3><p>Watch together in sync: YouTube, links, your own movie library or Jellyfin, with voice and chat.</p></div>
       <div class="card"><div class="ico">🎬</div><h3>Shows &amp; recording</h3><p>Record a show from a voice room with a director's controls, record your games on your graphics card, and instant replay.</p></div>
-      <div class="card"><div class="ico">👨‍👩‍👧</div><h3>Families</h3><p>Kid accounts with parents who approve who they talk to and where they go, set quiet hours and kid-safe AI.</p></div>
+      <div class="card"><div class="ico">👨‍👩‍👧</div><h3><a href="families.html" style="color:inherit;text-decoration:none">Families</a></h3><p>Kid accounts with parents who approve who they talk to and where they go, set quiet hours and kid-safe AI.</p></div>
             <div class="card"><div class="ico">📁</div><h3>Files</h3><p>Drag in images, video and documents up to the size you choose. Everything stays on your server.</p></div>
       <div class="card"><div class="ico">🌍</div><h3>Reach from anywhere</h3><p>Direct with your own domain, or through your own relay to keep your home IP private. HTTPS set up for you.</p></div>
-      <div class="card"><div class="ico">🦙</div><h3>Optional AI</h3><p>An assistant in your chats, and "Hey Llamble" in voice rooms, running on your server. Members can lend an idle gaming GPU. Off if you don't want it.</p></div>
+      <div class="card"><div class="ico">🦙</div><h3><a href="ai.html" style="color:inherit;text-decoration:none">Optional AI</a></h3><p>An assistant in your chats, and "Hey Llamble" in voice rooms, running on your server. Members can lend an idle gaming GPU. Off if you don't want it.</p></div>
       <div class="card"><div class="ico">🔓</div><h3>Code you can read</h3><p>The code is public, so anyone can check what it does. No ads, no tracking. Your server, your rules, your data.</p></div>
     </div>
   </div>
@@ -246,6 +196,14 @@ volumes:
 </div>
 
 <script>
+  // clips play while they're on screen; people who ask for less motion get controls instead
+  (() => {
+    const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const vids = document.querySelectorAll("video.shot");
+    if (still) return vids.forEach((v) => (v.controls = true));
+    const io = new IntersectionObserver((es) => es.forEach((e) => (e.isIntersecting ? e.target.play().catch(() => {}) : e.target.pause())), { threshold: 0.35 });
+    vids.forEach((v) => io.observe(v));
+  })();
   // show the newest version number
   fetch("https://api.github.com/repos/eEPlanet/Llamble/releases/latest")
     .then((r) => (r.ok ? r.json() : null))

@@ -1672,3 +1672,33 @@ body.pop-body > .pop { height: 100vh; }
 .watch-side > * { flex: 1; min-height: 0; }
 .watch-call { padding: 10px 16px; }
 .voice-view.idle .watch-idle-icon { font-size: 48px; }
+
+/* ---------- tutorial ---------- */
+.tut-dim { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.55); z-index: 9000; display: flex; align-items: center; justify-content: center; padding: 16px; }
+.tut-dim.passthrough { pointer-events: none; background: rgba(0, 0, 0, 0.35); }
+.tut-spot { position: fixed; z-index: 9000; border-radius: 10px; pointer-events: none; box-shadow: 0 0 0 3px var(--brand), 0 0 0 9999px rgba(0, 0, 0, 0.45); transition: left 0.2s, top 0.2s, width 0.2s, height 0.2s; animation: tut-pulse 1.6s ease-in-out infinite; }
+@keyframes tut-pulse { 50% { box-shadow: 0 0 0 6px var(--brand), 0 0 0 9999px rgba(0, 0, 0, 0.45); } }
+.tut-card { position: fixed; z-index: 9001; width: 320px; max-width: calc(100vw - 16px); background: var(--bg-2); color: var(--text); border: 1px solid var(--bg-3); border-radius: 12px; padding: 14px 16px; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5); }
+.tut-card.phone { width: auto; }
+.tut-card.center { position: static; width: 440px; text-align: center; padding: 24px; }
+.tut-card h2 { margin: 6px 0 8px; }
+.tut-card h3 { margin: 4px 0 6px; font-size: 16px; color: var(--text-strong); }
+.tut-card p { margin: 0 0 12px; line-height: 1.45; }
+.tut-emoji { font-size: 40px; }
+.tut-top { display: flex; align-items: center; justify-content: space-between; }
+.tut-count { font-size: 12px; color: var(--muted); }
+.tut-buttons { display: flex; gap: 8px; justify-content: flex-end; }
+.tut-card.center .tut-buttons { justify-content: center; }
+.practice-meter { position: absolute; left: 8px; right: 8px; top: 8px; height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.15); overflow: hidden; }
+.practice-meter > div { height: 100%; background: var(--green); transition: width 0.08s; }
+.practice-screen { margin: 12px 16px 0; min-height: 200px; border-radius: 10px; background: var(--bg-1); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: #fff; flex: none; }
+.practice-screen-emoji { font-size: 56px; }
+.practice-progress { width: 60%; height: 4px; border-radius: 2px; background: rgba(255, 255, 255, 0.3); overflow: hidden; }
+.practice-progress > div { height: 100%; width: 30%; background: #fff; animation: practice-play 30s linear infinite; }
+@keyframes practice-play { from { width: 0; } to { width: 100%; } }
+.practice-posters { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 12px; padding: 12px 16px; overflow-y: auto; flex: 1; min-height: 0; }
+.practice-poster { background: none; border: 0; color: var(--text); cursor: pointer; display: flex; flex-direction: column; gap: 6px; font: inherit; font-size: 13px; text-align: left; }
+.practice-poster > div { aspect-ratio: 2 / 3; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 40px; }
+.practice-poster:hover > div { outline: 2px solid var(--brand); }
+.practice-queue { padding: 12px 16px; flex: 1; display: flex; flex-direction: column; gap: 8px; }
+.tut-card.aside { opacity: 0; pointer-events: none; transition: opacity 0.12s; }

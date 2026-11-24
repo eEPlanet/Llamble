@@ -35,6 +35,7 @@ Run it on a NAS or a Windows PC. Everyone joins from Windows, Android, or any br
 - **Open servers:** a server can be Open, Look around then request, Request only, or Invite only. Open and listed ones show up in a searchable list (the binoculars), and requests go to that server's staff.
 - **Invites:** in-app invite cards, invite links, and "Invite someone to Llamble" for any member. Invites can make you friends with whoever joins.
 - **Home board:** who's in a room right now, notifications, news, notes and highlights from all your servers in one place.
+- **Tutorial:** new accounts get a short tour of the real app with a practice server (pretend people, messages and rooms, so nothing reaches anyone). It follows what each person can do here, staff tools included, skips parts that are turned off, and can be replayed from **Settings → Tutorial**.
 
 **Shows and recording**
 - Record a show from a voice room with a director's controls and layouts; record your screen or a game on your own graphics card; instant replay.

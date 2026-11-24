@@ -71,6 +71,9 @@ async fn ready_payload(state: &Shared, auth: &AuthUser) -> anyhow::Result<Value>
         "read_states": reads.into_iter().map(|(c, m)| json!({ "channel_id": c, "last_read_id": m })).collect::<Vec<_>>(),
         "presences": presences,
         "my_status": { "status": status_of(state, &auth.id), "hide_activity": hidden(&auth.id) },
+        // not seen the tutorial yet: the app offers it
+        // (LLAMBLE_SKIP_TUTORIAL=1: automated tests sign in fresh accounts and don't want the tour)
+        "tutorial_new": std::env::var("LLAMBLE_SKIP_TUTORIAL").as_deref() != Ok("1") && sqlx::query_scalar::<_, Option<i64>>("SELECT tutorial_at FROM users WHERE id = ?").bind(&auth.id).fetch_one(&state.db).await.ok().flatten().is_none(),
         // who's reading which chats (the app shows only the chats this person can see)
         "viewers": visible_viewers(state, &auth.id).await,
         "voice_states": voice,

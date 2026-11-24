@@ -45,7 +45,17 @@ export class ApiError extends Error {
   }
 }
 
+/** The tutorial answers requests itself while it runs (practice: nothing reaches the server). */
+export const apiHooks: {
+  api?: (path: string, opts: { method?: string; body?: unknown }) => Promise<any> | undefined;
+  upload?: (file: File | Blob, name: string, onProgress?: (p: number) => void) => Promise<FileObj> | undefined;
+} = {};
+
 export async function api<T = any>(path: string, opts: { method?: string; body?: unknown; server?: string; token?: string | null } = {}): Promise<T> {
+  if (apiHooks.api && !opts.server) {
+    const r = apiHooks.api(path, opts);
+    if (r) return r;
+  }
   const server = opts.server ?? session.server;
   const token = opts.token === undefined ? session.token : opts.token;
   const headers: Record<string, string> = {};
@@ -91,6 +101,8 @@ export function avatarUrl(fileId: string | null | undefined): string {
 }
 
 export async function upload(file: File | Blob, filename: string, onProgress?: (p: number) => void, signal?: AbortSignal, purpose?: "library"): Promise<FileObj> {
+  const hooked = apiHooks.upload?.(file, filename, onProgress);
+  if (hooked) return hooked;
   // say it's too big before sending it all (movies for the library, by instance admins, can be bigger)
   const { useStore } = await import("./store");
   const st = useStore.getState();
