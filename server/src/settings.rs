@@ -52,6 +52,15 @@ pub struct ServerSettings {
     /// members can stream a video file from their own device into a Watch Party
     #[serde(default = "yes")]
     pub watch_device_stream: bool,
+    /// a Jellyfin server whose libraries Watch Parties can play (self-hosted)
+    #[serde(default)]
+    pub jellyfin_url: String,
+    /// an API key made in Jellyfin's dashboard (stays on this server)
+    #[serde(default)]
+    pub jellyfin_key: String,
+    /// which Jellyfin libraries are shared (their ids)
+    #[serde(default)]
+    pub jellyfin_libraries: Vec<String>,
 }
 
 fn yes() -> bool {
@@ -90,6 +99,9 @@ impl ServerSettings {
             watch_party: true,
             watch_library: true,
             watch_device_stream: true,
+            jellyfin_url: String::new(),
+            jellyfin_key: String::new(),
+            jellyfin_libraries: vec![],
         }
     }
     pub fn max_upload_bytes(&self) -> u64 {
@@ -198,6 +210,10 @@ pub async fn put_settings(State(state): State<Shared>, auth: AuthUser, Json(req)
     if !s.llamble_news_url.starts_with("https://") && !local_test {
         return Err(AppError::bad("the Llamble news address must start with https://"));
     }
+    s.jellyfin_url = s.jellyfin_url.trim().trim_end_matches('/').to_string();
+    if !s.jellyfin_url.is_empty() && !(s.jellyfin_url.starts_with("http://") || s.jellyfin_url.starts_with("https://")) {
+        return Err(AppError::bad("the Jellyfin address must start with http:// or https://"));
+    }
     if !["connections", "everyone"].contains(&s.invite_search.as_str()) {
         return Err(AppError::bad("invite_search must be connections or everyone"));
     }
@@ -245,7 +261,7 @@ pub async fn put_settings(State(state): State<Shared>, auth: AuthUser, Json(req)
             "max_upload_bytes": s.max_upload_bytes(),
             "guild_create": s.guild_create,
             "people_name": s.people_name,
-            "watch": { "on": s.watch_party, "library": s.watch_library, "device": s.watch_device_stream },
+            "watch": { "on": s.watch_party, "library": s.watch_library, "device": s.watch_device_stream, "jellyfin": s.watch_library && !s.jellyfin_url.is_empty() && !s.jellyfin_libraries.is_empty() },
             "media": { "max_share": s.max_share, "max_camera": s.max_camera, "mic_default_kbps": s.mic_default_kbps, "mic_max_kbps": s.mic_max_kbps, "server_recording": s.allow_server_recording },
         }),
     );

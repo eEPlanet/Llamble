@@ -5,6 +5,7 @@ pub mod files;
 pub mod gifs;
 pub mod highlights;
 pub mod invite_cards;
+pub mod jellyfin;
 pub mod watch;
 pub mod notifications;
 pub mod notes;
@@ -76,7 +77,14 @@ pub fn router(state: Shared) -> Router<Shared> {
         .route("/api/channels/{cid}/watch/let-talk/{uid}", post(watch::let_talk))
         .route("/api/channels/{cid}/lock", post(voice::lock))
         .route("/api/watch/library", get(watch::library).post(watch::library_add))
-        .route("/api/watch/library/{fid}", delete(watch::library_remove))
+        .route("/api/watch/library/{fid}", delete(watch::library_remove).patch(watch::library_edit))
+        .route("/api/watch/jellyfin/libraries", get(jellyfin::libraries))
+        .route("/api/watch/jellyfin/items", get(jellyfin::items))
+        .route("/api/watch/jellyfin/{id}/session", post(jellyfin::session))
+        .route("/api/watch/jellyfin/{id}/stream", get(jellyfin::stream))
+        .route("/api/watch/jellyfin/{id}/subs/{index}", get(jellyfin::subs))
+        .route("/api/watch/jellyfin/{id}/poster", get(jellyfin::poster))
+        .route("/api/watch/jf/{tok}/{id}/hls/{*rest}", get(jellyfin::hls))
         .route("/api/notifications/read", post(notifications::mark_read))
         .route("/api/notifications/{id}", delete(notifications::remove))
         .route("/api/channels/{cid}", patch(guilds::update_channel).delete(guilds::delete_channel))
