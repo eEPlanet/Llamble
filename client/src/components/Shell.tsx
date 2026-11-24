@@ -4,7 +4,8 @@ import { CallScreens, CallStrip } from "./Calls";
 import { useEffect, useState } from "react";
 import { api, media as mediaSrc } from "../api";
 import { usePeopleName } from "../store";
-import { can, currentChannelId, homeOf, isMessages, isUnread, onEvent, openFriend, openGuildView, openHome, openMessages, selectChannel, showMobileNav, useStore } from "../store";
+import { openServersSeen } from "./Discover";
+import { can, canInvite, currentChannelId, homeOf, isMessages, isUnread, onEvent, openFriend, openGuildView, openHome, openMessages, selectChannel, showMobileNav, useStore } from "../store";
 import { useIsPhone } from "../phone";
 import { Board, useUnreadNotes } from "./Home";
 import { InvisibleGate, LockedSpace, WatchView } from "./Watch";
@@ -279,7 +280,7 @@ function GuildBar() {
               onClick={() => openGuildView(id)}
               onContextMenu={(e) =>
                 openMenu(e, [
-                  { label: "Invite People", onClick: () => openModal({ kind: "invite", guildId: id }), disabled: !can(id, P.CREATE_INVITE) },
+                  { label: "Invite People", onClick: () => openModal({ kind: "invite", guildId: id }), disabled: !canInvite(id) },
                   { label: "Mark As Read", onClick: () => markGuildRead(id) },
                   { separator: true, label: "" },
                   { label: "Server Settings", onClick: () => openModal({ kind: "serverSettings", guildId: id }), disabled: !can(id, P.MANAGE_GUILD) && !can(id, P.MANAGE_ROLES) },
@@ -302,7 +303,33 @@ function GuildBar() {
       <button className="guild-btn add" title="Join with an invite" onClick={() => openModal({ kind: "joinInvite" })}>
         <Icon name="link" size={20} />
       </button>
+      <OpenServersButton />
     </nav>
+  );
+}
+
+/** The binoculars: Open servers on this Llamble, with a dot when a new one is listed. */
+function OpenServersButton() {
+  const [dot, setDot] = useState(false);
+  useEffect(() => {
+    const check = () =>
+      api("/api/discover")
+        .then((r) => setDot(r.servers.some((g: any) => (g.listed_at || 0) > openServersSeen())))
+        .catch(() => {});
+    check();
+    const t = setInterval(check, 10 * 60 * 1000);
+    const seen = () => setDot(false);
+    window.addEventListener("llamble-open-servers-seen", seen);
+    return () => {
+      clearInterval(t);
+      window.removeEventListener("llamble-open-servers-seen", seen);
+    };
+  }, []);
+  return (
+    <button className="guild-btn add discover-btn" title="Find servers to join" onClick={() => openModal({ kind: "discover" })}>
+      <Icon name="binoculars" size={22} />
+      {dot && <span className="discover-dot" />}
+    </button>
   );
 }
 

@@ -43,6 +43,9 @@ pub struct ServerSettings {
     /// up, except to their own parents.
     #[serde(default = "default_invite_search")]
     pub invite_search: String,
+    /// any member (not kids) can send an "Invite to Llamble" link; off = admins only
+    #[serde(default = "yes")]
+    pub member_invites: bool,
     /// the Watch Party module: servers can add Watch Party spaces
     #[serde(default = "yes")]
     pub watch_party: bool,
@@ -96,6 +99,7 @@ impl ServerSettings {
             require_https: false,
             people_name: default_people_name(),
             invite_search: default_invite_search(),
+            member_invites: true,
             watch_party: true,
             watch_library: true,
             watch_device_stream: true,
@@ -261,6 +265,7 @@ pub async fn put_settings(State(state): State<Shared>, auth: AuthUser, Json(req)
             "max_upload_bytes": s.max_upload_bytes(),
             "guild_create": s.guild_create,
             "people_name": s.people_name,
+            "member_invites": s.member_invites,
             "watch": { "on": s.watch_party, "library": s.watch_library, "device": s.watch_device_stream, "jellyfin": s.watch_library && !s.jellyfin_url.is_empty() && !s.jellyfin_libraries.is_empty() },
             "media": { "max_share": s.max_share, "max_camera": s.max_camera, "mic_default_kbps": s.mic_default_kbps, "mic_max_kbps": s.mic_max_kbps, "server_recording": s.allow_server_recording },
         }),

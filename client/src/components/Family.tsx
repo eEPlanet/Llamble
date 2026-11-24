@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { KidAlarms } from "./Alarms";
 import { useShallow } from "zustand/react/shallow";
 import { api } from "../api";
-import { can, onEvent, useStore } from "../store";
+import { can, canInvite, onEvent, useStore } from "../store";
 import { P, type User } from "../types";
 import { closeModal, openModal, toast } from "../ui";
 import { Avatar, Icon, Toggle } from "./common";
@@ -221,7 +221,7 @@ function KidCard({ k, open, onToggle, onChange, me }: { k: Kid; open: boolean; o
       confirmLabel: "Add",
       onSubmit: (v: string) => api(`/api/kids/${kidId}/${path}`, { body: { user: v } }).then(onChange),
     });
-  const notIn = myGuilds.filter((g) => !k.guilds.some((x) => x.id === g.id) && can(g.id, P.CREATE_INVITE));
+  const notIn = myGuilds.filter((g) => !k.guilds.some((x) => x.id === g.id) && canInvite(g.id));
   const autoNames = s.auto_approve_owners.map((id) => users[id]?.display_name || id);
   return (
     <div className={"kid-card" + (open ? " open" : "")}>

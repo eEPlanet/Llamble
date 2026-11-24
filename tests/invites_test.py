@@ -25,6 +25,8 @@ other = (other.get("guild") or other)["id"]
 St, s_id = join(other, "sam", "Samantha")
 game = call("POST", "/api/guilds", Jt, json={"name": "Game Night"})
 game = (game.get("guild") or game)["id"]
+# Open, so members (not just staff) can invite people to it
+call("PATCH", f"/api/guilds/{game}", Jt, json={"join_mode": "open"})
 
 # ---- search: connections only by default (friends + shared servers)
 r = call("GET", f"/api/guilds/{game}/invite-search?q=sam", Jt)

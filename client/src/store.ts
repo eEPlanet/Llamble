@@ -8,6 +8,8 @@ export interface ServerConfig {
   guild_create: string;
   /** what this instance calls the people list ("Friends", "Contacts", …) */
   people_name?: string;
+  /** any member can send an Invite to Llamble link (off = admins only) */
+  member_invites?: boolean;
   public_domain?: string | null;
   version?: string;
   client_download?: string;
@@ -260,6 +262,18 @@ export function guildPerms(guildId: string | null, s: State = get()): number {
 
 export function can(guildId: string | null, perm: number): boolean {
   return (guildPerms(guildId) & perm) === perm;
+}
+
+/** Server staff: can manage the server or kick people. */
+export function isStaff(guildId: string | null): boolean {
+  return (guildPerms(guildId) & (P.ADMINISTRATOR | P.MANAGE_GUILD | P.KICK)) !== 0;
+}
+
+/** Open servers: anyone with Create invite. Others: staff only. */
+export function canInvite(guildId: string | null): boolean {
+  if (!guildId) return false;
+  const g = get().guilds[guildId];
+  return g?.join_mode === "open" ? can(guildId, P.CREATE_INVITE) : isStaff(guildId);
 }
 
 export function isUnread(ch: Channel, s: State = get()): boolean {

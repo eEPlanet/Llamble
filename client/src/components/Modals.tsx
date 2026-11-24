@@ -11,6 +11,7 @@ import { P } from "../types";
 import { closeModal, copy, toast, useUI, type ModalSpec } from "../ui";
 import { Avatar, BotTag, Icon } from "./common";
 import { ScreenPicker } from "./VoiceView";
+import { DiscoverModal } from "./Discover";
 import { ServerSettings, UserSettings } from "./Settings";
 
 export function Modals() {
@@ -75,6 +76,10 @@ function ModalBody({ m }: { m: ModalSpec }) {
       return <PartyModal partyId={m.partyId} with={m.with} />;
     case "newDm":
       return <NewDmModal />;
+    case "llambleInvite":
+      return <LlambleInvite />;
+    case "discover":
+      return <DiscoverModal guildId={m.guildId} />;
   }
 }
 
@@ -305,22 +310,24 @@ function InviteModal({ guildId }: { guildId: string }) {
   const guild = useStore((s) => s.guilds[guildId]);
   const [expires, setExpires] = useState(7 * 86400);
   const [maxUses, setMaxUses] = useState(0);
+  const [friend, setFriend] = useState(true);
   const [inv, setInv] = useState<any>(null);
   const [error, setError] = useState("");
   const make = async () => {
     try {
-      setInv(await api(`/api/guilds/${guildId}/invites`, { body: { expires_in: expires, max_uses: maxUses } }));
+      setInv(await api(`/api/guilds/${guildId}/invites`, { body: { expires_in: expires, max_uses: maxUses, add_friend: friend } }));
     } catch (e: any) {
       setError(e.message);
     }
   };
   useEffect(() => {
     make();
-  }, [expires, maxUses]);
+  }, [expires, maxUses, friend]);
   return (
     <div className="modal">
       <h2>Invite people to {guild?.name}</h2>
-      <InviteSearch guildId={guildId} />
+      <AddAsFriends on={friend} set={setFriend} />
+      <InviteSearch guildId={guildId} addFriend={friend} />
       <SendToParty guildId={guildId} />
       <div className="sidebar-sep" />
       <p className="muted small">Not on Llamble yet? Send this link. It opens a sign-up page in any browser (phone, Chromebook, laptop). People with the desktop app can paste it into Register instead.</p>
@@ -549,7 +556,61 @@ function SaveGif({ fileId, url: initialUrl, preview }: { fileId?: string; url?: 
 
 /** Invite a whole party: posts the invite in the party's chat. */
 /** Search people on this instance and send each an invite card in your DM with them. */
-function InviteSearch({ guildId }: { guildId: string }) {
+/** The "Add as friends" box on invites (checked by default). */
+function AddAsFriends({ on, set }: { on: boolean; set: (v: boolean) => void }) {
+  if (useStore.getState().me?.is_kid) return null;
+  return (
+    <label className="check-row">
+      <input type="checkbox" checked={on} onChange={(e) => set(e.target.checked)} />
+      <span>
+        Add as friends <span className="muted small">· whoever joins from this invite becomes your friend</span>
+      </span>
+    </label>
+  );
+}
+
+/** A one-time link to join this Llamble (no server). */
+function LlambleInvite() {
+  const [friend, setFriend] = useState(true);
+  const [inv, setInv] = useState<any>(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    setError("");
+    api("/api/invites/llamble", { body: { add_friend: friend } })
+      .then(setInv)
+      .catch((e) => setError(e.message));
+  }, [friend]);
+  return (
+    <div className="modal">
+      <h2>Invite someone to Llamble</h2>
+      <p className="muted small">A link that signs one person up for this Llamble. It doesn't add them to any server. It works once and runs out in 7 days.</p>
+      <AddAsFriends on={friend} set={setFriend} />
+      {inv && (
+        <>
+          <label>Invite link</label>
+          <div className="copy-row">
+            <input readOnly value={inviteLink(inv.code)} onFocus={(e) => e.target.select()} />
+            <button className="btn primary" onClick={() => copy(inviteLink(inv.code), "Invite link copied")}>
+              Copy
+            </button>
+          </div>
+          <div className="muted small">
+            Code <b>{inv.code}</b>
+            {!useStore.getState().config.public_domain && " · this home address only works on your network until Remote Access is on"}
+          </div>
+        </>
+      )}
+      {error && <div className="form-error">{error}</div>}
+      <div className="modal-foot">
+        <button className="btn primary" onClick={closeModal}>
+          Done
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function InviteSearch({ guildId, addFriend }: { guildId: string; addFriend?: boolean }) {
   const [q, setQ] = useState("");
   const [found, setFound] = useState<any[]>([]);
   const [scope, setScope] = useState("connections");
@@ -569,7 +630,7 @@ function InviteSearch({ guildId }: { guildId: string }) {
   const invite = async (uid: string) => {
     setBusy(uid);
     try {
-      const r = await api(`/api/guilds/${guildId}/invite-people`, { body: { user_ids: [uid] } });
+      const r = await api(`/api/guilds/${guildId}/invite-people`, { body: { user_ids: [uid], add_friend: !!addFriend } });
       if (r.sent.length) setSent((x) => [...x, uid]);
       else toast(r.skipped[0]?.why || "They can't be invited", "error");
     } catch (e: any) {

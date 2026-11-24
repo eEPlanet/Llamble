@@ -21,7 +21,13 @@ export interface Guild {
   /** add AI pictures / show recordings to the server's Highlights automatically */
   highlights_auto_pictures?: boolean;
   highlights_auto_recordings?: boolean;
+  /** who can get in: open | preview | request | invite */
+  join_mode?: JoinMode;
+  /** a few words shown under Open servers */
+  description?: string;
 }
+
+export type JoinMode = "open" | "preview" | "request" | "invite";
 
 export type NoteColor = "yellow" | "pink" | "blue" | "green" | "purple";
 

@@ -286,7 +286,7 @@ pub async fn can_view_file(state: &Shared, auth: &AuthUser, f: &FileRow) -> ApiR
     .await?;
     for c in channels {
         if let Ok(ch) = load_channel(&state.db, &c).await {
-            if perms::channel_perms(&state.db, &ch, &auth.id).await? & perms::VIEW != 0 {
+            if perms::channel_perms(&state.db, &ch, &auth.id).await? & perms::VIEW != 0 || crate::api::discover::previewable_channel(state, &ch).await {
                 return Ok(true);
             }
         }

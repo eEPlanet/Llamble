@@ -5,6 +5,7 @@ pub mod files;
 pub mod gifs;
 pub mod highlights;
 pub mod invite_cards;
+pub mod discover;
 pub mod jellyfin;
 pub mod watch;
 pub mod notifications;
@@ -213,6 +214,14 @@ pub fn router(state: Shared) -> Router<Shared> {
         .route("/api/channels/{cid}/messages/all", delete(messages::clear_channel))
         .route("/api/guilds/{gid}/members/{uid}/messages", delete(messages::delete_user_messages))
         .route("/api/admin/invites", post(guilds::create_instance_invite))
+        .route("/api/invites/llamble", post(discover::create_llamble_invite))
+        .route("/api/discover", get(discover::list))
+        .route("/api/discover/{gid}", get(discover::preview))
+        .route("/api/discover/{gid}/channels/{cid}/messages", get(discover::preview_messages))
+        .route("/api/discover/{gid}/join", post(discover::join))
+        .route("/api/discover/{gid}/request", post(discover::request).delete(discover::cancel_request))
+        .route("/api/guilds/{gid}/join-requests", get(discover::list_requests))
+        .route("/api/guilds/{gid}/join-requests/{uid}/{what}", post(discover::decide))
         .route("/api/gateway", get(crate::gateway::upgrade))
         .route("/api/bot", get(crate::bot::status))
         .route("/api/bot/dm", post(bot_dm))
@@ -324,12 +333,19 @@ async fn admin_users(State(state): State<Shared>, auth: AuthUser) -> ApiResult<J
     }
     let users = sqlx::query_as::<_, UserPublic>(&format!("SELECT {USER_COLS} FROM users ORDER BY created_at")).fetch_all(&state.db).await?;
     let writers: Vec<String> = sqlx::query_scalar("SELECT id FROM users WHERE news_writer = 1").fetch_all(&state.db).await?;
+    // who invited whom (Invite to Llamble and server links)
+    let inv: std::collections::HashMap<String, String> = sqlx::query_as::<_, (String, String)>("SELECT u.id, i.username FROM users u JOIN users i ON i.id = u.invited_by")
+        .fetch_all(&state.db)
+        .await?
+        .into_iter()
+        .collect();
     Ok(Json(
         users
             .into_iter()
             .map(|u| {
                 let mut v = serde_json::to_value(&u).unwrap_or(Value::Null);
                 v["news_writer"] = json!(writers.contains(&u.id));
+                v["invited_by"] = json!(inv.get(&u.id));
                 v
             })
             .collect(),

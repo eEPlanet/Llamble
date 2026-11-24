@@ -56,7 +56,7 @@ async fn friend_json(state: &Shared, me: &str, other: &str) -> ApiResult<Value> 
 }
 
 /// Both sides hear about a change to their friendship.
-async fn tell_both(state: &Shared, a: &str, b: &str) {
+pub async fn tell_both(state: &Shared, a: &str, b: &str) {
     for (me, other) in [(a, b), (b, a)] {
         let v = match friend_json(state, me, other).await {
             Ok(v) => v,

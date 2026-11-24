@@ -129,6 +129,7 @@ export function FriendsSidebar() {
           <Icon name="plus" size={18} />
         </button>
       </form>
+      <InviteToLlamble />
       <div className="channel-scroll">
         {groups.requests.length > 0 && (
           <div className="dm-section">Requests — {groups.requests.length}</div>
@@ -154,6 +155,18 @@ export function FriendsSidebar() {
         )}
       </div>
     </>
+  );
+}
+
+/** "Invite someone to Llamble" (any member unless an admin turned it off; not kids). */
+export function InviteToLlamble() {
+  const me = useStore((s) => s.me);
+  const on = useStore((s) => s.config.member_invites !== false);
+  if (!me || me.is_kid || (!on && !me.is_admin)) return null;
+  return (
+    <button className="btn small link friends-invite" onClick={() => openModal({ kind: "llambleInvite" })}>
+      + Invite someone to Llamble
+    </button>
   );
 }
 
