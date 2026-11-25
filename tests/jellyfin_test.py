@@ -68,6 +68,10 @@ try:
     s2h = call("POST", "/api/watch/jellyfin/m2/session?hevc=1", J)
     assert "VideoCodec=hevc,h264" in s2h["hls"] and "SegmentContainer=mp4" in s2h["hls"] and "MaxWidth" not in s2h["hls"], s2h["hls"]
     assert "AllowVideoStreamCopy=true" in s1["hls"] and "MaxWidth" not in s1["hls"], s1["hls"]
+    # a bitrate is always sent (Jellyfin reads "none" as zero and shrinks the picture to nothing)
+    for x in (s1, s2, s2h):
+        assert "VideoBitrate=" in x["hls"], x["hls"]
+    assert s1["info"]["plan"] == "direct" and s2["info"]["plan"] == "convert" and s2h["info"]["plan"] in ("copy", "direct"), (s1["info"], s2["info"], s2h["info"])
     r = requests.get(B + "/api/watch/jellyfin/m1/stream", headers={**H(J), "Range": "bytes=100-199"})
     assert r.status_code == 206 and len(r.content) == 100 and r.headers["content-range"].startswith("bytes 100-199/"), (r.status_code, r.headers)
     assert requests.get(B + "/api/watch/jellyfin/m1/stream").status_code == 401  # needs signing in

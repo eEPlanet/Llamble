@@ -441,6 +441,8 @@ interface Source {
   /** converted (HLS) playback to fall back to if the file won't play as it is */
   fallback?: string;
   subs: { url: string; label: string; lang?: string; on?: boolean }[];
+  /** what the file is and how it's being sent (Jellyfin), for Stream info */
+  info?: { file?: string; codec?: string; width?: number; height?: number; bitrate?: number; container?: string; plan?: string };
 }
 
 let libraryCache: Promise<any> | null = null;
@@ -481,7 +483,7 @@ async function resolveSource(item: WatchItem): Promise<Source> {
     const url = await vttBlob(`/api/watch/jellyfin/${item.src}/subs/${t.index}?source=${encodeURIComponent(s.media_source_id)}`).catch(() => "");
     if (url) subs.push({ url, label: t.label, lang: t.lang || undefined, on: !!t.default });
   }
-  return s.direct ? { src: media(`/api/watch/jellyfin/${item.src}/stream?source=${encodeURIComponent(s.media_source_id)}`), fallback: hls, subs } : { src: hls, subs };
+  return s.direct ? { src: media(`/api/watch/jellyfin/${item.src}/stream?source=${encodeURIComponent(s.media_source_id)}`), fallback: hls, subs, info: s.info } : { src: hls, subs, info: s.info };
 }
 
 /** A link, a library movie or a Jellyfin item: one video element (HLS through hls.js where
@@ -492,6 +494,7 @@ function FilePlayer({ cid, item, vol }: { cid: string; item: WatchItem; vol: num
   const [source, setSource] = useState<Source | null>(null);
   const [useFallback, setUseFallback] = useState(false);
   const [cc, setCc] = useState(() => localStorage.getItem("llamble.cc") === "1");
+  const [showInfo, setShowInfo] = useState(false);
   useEffect(() => {
     let dead = false;
     setSource(null);
@@ -587,9 +590,60 @@ function FilePlayer({ cid, item, vol }: { cid: string; item: WatchItem; vol: num
           CC
         </button>
       )}
+      {source && (
+        <button className={"watch-info-btn" + (showInfo ? " on" : "")} title="Stream info" onClick={() => setShowInfo(!showInfo)}>
+          i
+        </button>
+      )}
+      {showInfo && source && <StreamInfo video={ref} source={source} converted={useFallback || !!source.info && source.info.plan !== "direct" && /\.m3u8/i.test(src)} />}
       {!source && !problem && <div className="watch-problem">Loading…</div>}
       {problem && <div className="watch-problem">{problem}</div>}
     </>
+  );
+}
+
+/** How this video is reaching you: the file, how it's sent, and the picture actually playing. */
+function StreamInfo({ video, source, converted }: { video: React.RefObject<HTMLVideoElement | null>; source: Source; converted: boolean }) {
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => tick((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const el = video.current;
+  const i = source.info;
+  const mbps = (b?: number) => (b ? (b / 1e6).toFixed(1) + " Mbps" : "");
+  const plan = !i
+    ? "The file as it is"
+    : i.plan === "direct" && !converted
+      ? "The file as it is (full quality)"
+      : i.plan === "convert"
+        ? "Converted by Jellyfin to 1080p H.264"
+        : "Passed through by Jellyfin (full quality)";
+  let dropped = "";
+  try {
+    const q = el?.getVideoPlaybackQuality?.();
+    if (q && q.totalVideoFrames) dropped = `${q.droppedVideoFrames} of ${q.totalVideoFrames}`;
+  } catch {}
+  return (
+    <div className="watch-info">
+      {i?.file && (
+        <div>
+          <b>File:</b> {i.file}
+          {i.width && i.height ? ` · ${i.width}×${i.height}` : ""} {mbps(i.bitrate) && "· " + mbps(i.bitrate)}
+        </div>
+      )}
+      <div>
+        <b>Sent as:</b> {plan}
+      </div>
+      <div>
+        <b>Playing:</b> {el && el.videoWidth ? `${el.videoWidth}×${el.videoHeight}` : "not started"}
+      </div>
+      {dropped && (
+        <div>
+          <b>Dropped frames:</b> {dropped}
+        </div>
+      )}
+    </div>
   );
 }
 

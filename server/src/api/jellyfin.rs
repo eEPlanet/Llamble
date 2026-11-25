@@ -307,15 +307,27 @@ pub async fn session(State(state): State<Shared>, auth: AuthUser, Path(id): Path
     // Otherwise Jellyfin streams it in pieces (HLS). The picture is only re-encoded when it has to
     // be: H.264, or HEVC on a device that plays HEVC (most 4K files), are repackaged as they are,
     // full quality and almost no work for the server. Anything else becomes 1080p H.264 at a good
-    // bitrate: converting 4K as it plays is more than most servers can keep up with (choppy), and
-    // Jellyfin's default bitrate is low for it (blocky).
-    let video_args = if is_hevc && can_hevc {
-        "VideoCodec=hevc,h264&SegmentContainer=mp4&AllowVideoStreamCopy=true&MaxStreamingBitrate=200000000"
+    // bitrate: converting 4K as it plays is more than most servers can keep up with (choppy).
+    // A bitrate is ALWAYS sent: current Jellyfin reads "no bitrate" as zero, and if it converts
+    // it then shrinks the picture to almost nothing (416x228 at 1 kbps). The limit is high, and
+    // Jellyfin never goes above the file's own quality, so it doesn't stop a pass-through.
+    let (video_args, plan) = if is_hevc && can_hevc {
+        ("VideoCodec=hevc,h264&SegmentContainer=mp4&AllowVideoStreamCopy=true&VideoBitrate=200000000&MaxStreamingBitrate=200000000", "copy")
     } else if vcodec == "h264" {
-        "VideoCodec=h264&SegmentContainer=ts&AllowVideoStreamCopy=true&MaxStreamingBitrate=200000000"
+        ("VideoCodec=h264&SegmentContainer=ts&AllowVideoStreamCopy=true&VideoBitrate=200000000&MaxStreamingBitrate=200000000", "copy")
     } else {
-        "VideoCodec=h264&SegmentContainer=ts&MaxWidth=1920&MaxHeight=1080&VideoBitrate=10000000&MaxStreamingBitrate=10320000"
+        ("VideoCodec=h264&SegmentContainer=ts&MaxWidth=1920&MaxHeight=1080&VideoBitrate=10000000&MaxStreamingBitrate=10320000", "convert")
     };
+    // what the file is, for the player's Stream info
+    let info = json!({
+        "file": video["DisplayTitle"].as_str().unwrap_or(""),
+        "codec": vcodec,
+        "width": video["Width"],
+        "height": video["Height"],
+        "bitrate": video["BitRate"].as_i64().or(src["Bitrate"].as_i64()),
+        "container": container,
+        "plan": if direct { "direct" } else { plan },
+    });
     Ok(Json(json!({
         "id": id,
         "title": item_brief(&v)["title"],
@@ -325,6 +337,7 @@ pub async fn session(State(state): State<Shared>, auth: AuthUser, Path(id): Path
         "hls": format!("/api/watch/jf/{}/{id}/hls/master.m3u8?MediaSourceId={}&{video_args}&AudioCodec=aac&AllowAudioStreamCopy=true&TranscodingMaxAudioChannels=2&MinSegments=1&BreakOnNonKeyFrames=true&DeviceId=llamble-{}&PlaySessionId={}",
             path_token(&state, &auth.id, &id), src["Id"].as_str().unwrap_or(&id), auth.id, crate::error::new_id()),
         "subs": subs,
+        "info": info,
     })))
 }
 
