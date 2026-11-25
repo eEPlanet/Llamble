@@ -97,6 +97,15 @@ export async function startCall(channelId: string, opts: { urgent?: boolean } = 
   }
   try {
     const r = await api(`/api/channels/${channelId}/ring`, { method: "POST", body: { urgent: !!opts.urgent } });
+    const unreachable: string[] = r.unreachable || [];
+    if (!r.ringing && unreachable.length) {
+      // nothing of theirs is on to ring (app closed and phone not listening): say so, and
+      // go straight to leaving a voicemail, like a phone that's off
+      useCalls.setState({ outgoing: null });
+      hangUpIfAlone(channelId).then(() => useCalls.setState({ noAnswer: { channel_id: channelId, reason: "unreachable" } }));
+      return;
+    }
+    if (unreachable.length) toast(`Couldn't reach ${unreachable.map(name).join(", ")}`);
     if (!r.ringing) useCalls.setState({ outgoing: null }); // everyone's already in the call
     else useCalls.setState((s) => (s.outgoing?.channel_id === channelId ? { outgoing: { ...s.outgoing, ring_id: r.ring_id } } : {}));
   } catch (e: any) {
@@ -119,6 +128,7 @@ export async function acceptCall() {
   const c = useCalls.getState().incoming;
   if (!c) return;
   useCalls.setState({ incoming: null, view: true, guestOf: c.guest ? c.channel_id : null });
+  import("./gateway").then(({ wake }) => wake()); // answering: they're here now
   if (!c.guest) {
     const { selectChannel, homeOf } = await import("./store");
     selectChannel(homeOf(useStore.getState().channels[c.channel_id]), c.channel_id);
@@ -203,7 +213,9 @@ export async function addToCall(channelId: string, userIds: string[]) {
   try {
     const r = await api(`/api/channels/${channelId}/call/add`, { method: "POST", body: { user_ids: userIds } });
     if (r.party_id && r.party_id !== channelId) moveCall(r.party_id);
-    if (r.ringing) toast(userIds.length === 1 ? `Calling ${name(userIds[0])}…` : `Calling ${userIds.length} people…`);
+    const unreachable: string[] = r.unreachable || [];
+    if (unreachable.length) toast(`Couldn't reach ${unreachable.map(name).join(", ")} right now`);
+    if (r.ringing) toast(r.ringing === 1 ? `Calling ${name(userIds.find((u) => !unreachable.includes(u))!)}…` : `Calling ${r.ringing} people…`);
   } catch (e: any) {
     toast(e.message, "error");
   }

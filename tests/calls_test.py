@@ -148,4 +148,45 @@ for t in (A, Bt):
     ok(requests.post(f"{B}/api/voice/leave", headers=H(t)))
 ok(requests.post(f"{B}/api/channels/{p2}/ring/end", headers=H(A), json={"reason": "cancelled"}))
 print("a call's party kept with its own name")
+
+# nobody can be reached (no app open, no phone listening): no fake ringing, a missed call note,
+# and the caller is told straight away
+Dt = ok(requests.post(B + "/api/auth/register", json={"invite": inv, "username": "dee", "password": "pass-word-123"}))["token"]
+d_id = ok(requests.get(B + "/api/users/@me", headers=H(Dt)))["id"]
+dm_d = ok(requests.post(B + "/api/users/@me/channels", headers=H(A), json={"recipient_id": d_id}))["id"]
+ok(requests.post(f"{B}/api/channels/{dm_d}/voice", headers=H(A)))
+r = ok(requests.post(f"{B}/api/channels/{dm_d}/ring", headers=H(A)))
+assert r["ringing"] == 0 and r["unreachable"] == [d_id], r
+assert not any(e[0] == "CALL_RING" for e in ea)
+assert "📞 Missed call" in [m["content"] for m in ok(requests.get(f"{B}/api/channels/{dm_d}/messages", headers=H(A)))]
+ok(requests.post(f"{B}/api/voice/leave", headers=H(A)))
+print("nobody reachable: told at once, no ringing, a missed call left")
+
+# a phone opened only to show a ringing call doesn't make its person look online until it's used
+pres = []
+wa = create_connection(B.replace("http", "ws") + "/api/gateway?access_token=" + A)
+wa.recv()
+def rd_pres():
+    while True:
+        try: m = json.loads(wa.recv())
+        except Exception: return
+        if m.get("t") == "PRESENCE_UPDATE": pres.append(m["d"])
+threading.Thread(target=rd_pres, daemon=True).start()
+time.sleep(0.3)
+wq = create_connection(B.replace("http", "ws") + "/api/gateway?access_token=" + Dt + "&quiet=1")
+ready = json.loads(wq.recv())
+assert ready["t"] == "READY"
+time.sleep(0.8)
+assert not [p for p in pres if p["user_id"] == d_id], pres
+# others don't see them as online in a fresh connection either
+r2 = create_connection(B.replace("http", "ws") + "/api/gateway?access_token=" + Bt)
+rb = json.loads(r2.recv())["d"]
+assert d_id not in [p["user_id"] for p in rb["presences"]], rb["presences"]
+r2.close()
+# they answer / start using it: now they're online
+wq.send(json.dumps({"op": "awake"}))
+end = time.time() + 3
+while time.time() < end and not [p for p in pres if p["user_id"] == d_id]: time.sleep(0.05)
+assert [p for p in pres if p["user_id"] == d_id and p["status"] == "online"], pres
+print("ringing-only phone stays hidden; shows online once it's used")
 print("ALL CALLS OK")

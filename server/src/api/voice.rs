@@ -216,9 +216,16 @@ pub async fn ring(State(state): State<Shared>, auth: AuthUser, Path(cid): Path<S
     require_channel(&state.db, &ch, &auth.id, perms::CONNECT).await?;
     // already in the call don't need ringing
     let in_call: Vec<String> = state.hub.voice.iter().filter(|v| v.channel_id == cid).map(|v| v.user_id.clone()).collect();
-    let ids: Vec<String> = channel_audience(&state.db, &ch).await.into_iter().filter(|u| u != &auth.id && !in_call.contains(u)).collect();
-    if ids.is_empty() {
+    let others: Vec<String> = channel_audience(&state.db, &ch).await.into_iter().filter(|u| u != &auth.id && !in_call.contains(u)).collect();
+    if others.is_empty() {
         return Ok(Json(json!({ "ok": true, "ringing": 0 })));
+    }
+    // only ring people something of theirs can hear: an open Llamble, or their phone's listener.
+    // Nobody reachable: say so straight away (and leave a "missed call") instead of ringing nothing.
+    let (ids, unreachable): (Vec<String>, Vec<String>) = others.into_iter().partition(|u| state.hub.reachable(u));
+    if ids.is_empty() {
+        missed_call_note(&state, &cid, &auth.id).await;
+        return Ok(Json(json!({ "ok": true, "ringing": 0, "unreachable": unreachable })));
     }
     let id = RING_IDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     RINGS.insert(cid.clone(), Ring { id, from: auth.id.clone(), waiting: ids.clone(), added: false });
@@ -236,7 +243,7 @@ pub async fn ring(State(state): State<Shared>, auth: AuthUser, Path(cid): Path<S
             end_ring(&st, &c, "missed").await;
         }
     });
-    Ok(Json(json!({ "ok": true, "ringing": ids.len(), "ring_id": id })))
+    Ok(Json(json!({ "ok": true, "ringing": ids.len(), "ring_id": id, "unreachable": unreachable })))
 }
 
 /// The whole ring is over: stop it everywhere, and leave a "missed call" when nobody picked up.
@@ -398,7 +405,11 @@ pub async fn add_to_call(State(state): State<Shared>, auth: AuthUser, Path(cid):
         state.hub.send_users(&in_call, "CALL_MOVED", &json!({ "from": cid, "to": id }));
         id
     };
-    // ring the added people in the party
+    // ring the added people in the party (those who can be reached)
+    let (added, unreachable): (Vec<String>, Vec<String>) = added.into_iter().partition(|u| state.hub.reachable(u));
+    if added.is_empty() {
+        return Ok(Json(json!({ "ok": true, "ringing": 0, "party_id": pid, "unreachable": unreachable })));
+    }
     let ring_id = {
         let mut e = RINGS.entry(pid.clone()).or_insert_with(|| Ring { id: RING_IDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed), from: auth.id.clone(), waiting: vec![], added: true });
         for u in &added {
@@ -421,7 +432,7 @@ pub async fn add_to_call(State(state): State<Shared>, auth: AuthUser, Path(cid):
             end_ring(&st, &c, "missed").await;
         }
     });
-    Ok(Json(json!({ "ok": true, "ringing": added.len(), "ring_id": ring_id, "party_id": pid })))
+    Ok(Json(json!({ "ok": true, "ringing": added.len(), "ring_id": ring_id, "party_id": pid, "unreachable": unreachable })))
 }
 
 /// Unsaved call parties nobody has been on a call in for a while are deleted (nobody kept them

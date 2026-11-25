@@ -26,6 +26,11 @@ export function wireViewing() {
   if (wired) return;
   wired = true;
   useStore.subscribe(update);
+  // a phone that was only ringing is being used now: say which chat is open
+  window.addEventListener("llamble:awake", () => {
+    sent = undefined;
+    update();
+  });
   // a fresh connection starts with nothing: say it again
   onEvent((t) => {
     if (t === "READY") {

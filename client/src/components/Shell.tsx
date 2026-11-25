@@ -6,7 +6,8 @@ import { api, media as mediaSrc } from "../api";
 import { usePeopleName } from "../store";
 import { openServersSeen } from "./Discover";
 import { can, canInvite, currentChannelId, homeOf, isMessages, isUnread, onEvent, openFriend, openGuildView, openHome, openMessages, selectChannel, showMobileNav, useStore } from "../store";
-import { useIsPhone } from "../phone";
+import { isPhone, useIsPhone, wireSwipe } from "../phone";
+import { boardHasNew, useAnyBoardNew, useBoardHasNew } from "../boardnew";
 import { Board, useUnreadNotes } from "./Home";
 import { InvisibleGate, LockedSpace, WatchView } from "./Watch";
 import { useUnreadNotices } from "../notifications";
@@ -49,6 +50,24 @@ export function Shell() {
   // phones: the member list slides over the chat when asked for, so it starts closed
   useEffect(() => {
     if (mobile) useStore.setState({ memberListOpen: false });
+  }, [mobile]);
+  // phones: swipe right for the menu (servers and channels), left to go back to the page
+  useEffect(() => {
+    if (!mobile) return;
+    return wireSwipe(
+      () => {
+        const ui = useUI.getState();
+        if (ui.menu || ui.modals.length || !useStore.getState().mobileMain) return;
+        // the people list slid over a chat closes first
+        if (useStore.getState().memberListOpen) return useStore.setState({ memberListOpen: false });
+        showMobileNav(true);
+      },
+      () => {
+        const ui = useUI.getState();
+        if (ui.menu || ui.modals.length || useStore.getState().mobileMain) return;
+        showMobileNav(false);
+      },
+    );
   }, [mobile]);
   const guildView = useStore((s) => s.guildView[s.selectedGuild]);
   const [update, setUpdate] = useState<string | null>(null);
@@ -246,6 +265,7 @@ function GuildBar() {
         >
           <img src="./icon-192.png" alt="Llamble" draggable={false} />
           {homeCount ? <span className="badge">{homeCount}</span> : null}
+          <HomeBoardDot />
         </button>
       </div>
       <div className="guild-sep" />
@@ -285,7 +305,12 @@ function GuildBar() {
               className={"guild-btn" + (selected === id ? " active" : "") + (g.icon_file_id ? " has-img" : "")}
               data-gid={id}
               title={g.name}
-              onClick={() => openGuildView(id)}
+              onClick={() => {
+                // phones: something new on its board opens the board; otherwise its channel list
+                const fresh = boardHasNew(id);
+                openGuildView(id);
+                if (isPhone() && fresh) showMobileNav(false);
+              }}
               onContextMenu={(e) =>
                 openMenu(e, [
                   { label: "Invite People", onClick: () => openModal({ kind: "invite", guildId: id }), disabled: !canInvite(id) },
@@ -299,6 +324,7 @@ function GuildBar() {
               <GuildIcon name={g.name} iconId={g.icon_file_id} />
               {voiceGuild === id && <span className="voice-dot" title="You're in voice here"><Icon name="speaker" size={10} stroke={3} /></span>}
               {u?.mentions ? <span className="badge">{u.mentions}</span> : null}
+              <BoardDot gid={id} />
             </button>
           </div>
         );
@@ -460,4 +486,16 @@ function VersionNotice() {
     );
   }
   return null;
+}
+
+/** A small dot on a server's icon: something new on its board. */
+function BoardDot({ gid }: { gid: string }) {
+  const on = useBoardHasNew(gid);
+  return on ? <span className="board-dot" title="New on the board" /> : null;
+}
+
+/** Something new on any server's board: Home gathers it all, so Home shows it too. */
+function HomeBoardDot() {
+  const on = useAnyBoardNew();
+  return on ? <span className="board-dot" title="New on your servers' boards" /> : null;
 }

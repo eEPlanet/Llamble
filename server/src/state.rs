@@ -127,9 +127,34 @@ pub struct Hub {
     next: AtomicU64,
     conns: DashMap<String, Vec<(u64, UnboundedSender<String>)>>,
     pub voice: DashMap<String, VoiceState>,
+    /// connections that don't make their person look online: a phone app opened only to show
+    /// a ringing call. They still get everything; they just aren't announced until "awake".
+    quiet: dashmap::DashSet<u64>,
 }
 
 impl Hub {
+    /// Is this person shown online (any connection that isn't quiet)?
+    pub fn shown(&self, uid: &str) -> bool {
+        self.conns.get(uid).map(|e| e.iter().any(|(i, _)| !self.quiet.contains(i))).unwrap_or(false)
+    }
+
+    pub fn set_quiet(&self, conn: u64, on: bool) {
+        if on {
+            self.quiet.insert(conn);
+        } else {
+            self.quiet.remove(&conn);
+        }
+    }
+
+    pub fn is_quiet(&self, conn: u64) -> bool {
+        self.quiet.contains(&conn)
+    }
+
+    /// Can anything of theirs be reached right now: an open Llamble, or the phone's listener?
+    pub fn reachable(&self, uid: &str) -> bool {
+        self.conns.contains_key(uid) || crate::pushes::listening(uid)
+    }
+
     pub fn register(&self, user_id: &str, tx: UnboundedSender<String>) -> (u64, bool) {
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         let mut e = self.conns.entry(user_id.to_string()).or_default();
@@ -140,6 +165,7 @@ impl Hub {
 
     /// Returns true if this was the user's last connection.
     pub fn unregister(&self, user_id: &str, conn: u64) -> bool {
+        self.quiet.remove(&conn);
         let mut last = false;
         if let Some(mut e) = self.conns.get_mut(user_id) {
             e.retain(|(i, _)| *i != conn);

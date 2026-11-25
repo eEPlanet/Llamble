@@ -12,6 +12,39 @@ let lastHeard = 0;
 // the server said it's restarting and when to come back (spread out, so everyone doesn't reconnect at once)
 let comeBackIn = 0;
 
+// A phone app opened only to show a ringing call doesn't make you look online: the connection
+// is "quiet" until you actually use the app (answer, or tap anything else). The phone app
+// starts the page with ?ring=1 for that; a ring that wakes an app already in the background
+// calls ringQuiet() before it reconnects.
+let quiet = (() => {
+  try {
+    const q = new URLSearchParams(location.search);
+    if (!q.has("ring")) return false;
+    q.delete("ring");
+    history.replaceState(history.state, "", location.pathname + (q.toString() ? "?" + q : "") + location.hash);
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
+/** A ringing call brought the app back from the background: stay hidden until it's used. */
+export function ringQuiet() {
+  // still connected and heard from just now: they were using the app anyway
+  if (ws && ws.readyState === WebSocket.OPEN && Date.now() - lastHeard < 40000) return;
+  quiet = true;
+}
+
+/** The person is using the app now: show them online. */
+export function wake() {
+  if (!quiet) return;
+  quiet = false;
+  sendGateway("awake");
+  window.dispatchEvent(new Event("llamble:awake"));
+}
+
+export const isQuiet = () => quiet;
+
 export function connectGateway() {
   stopped = false;
   open();
@@ -31,7 +64,7 @@ export function sendGateway(op: string, data: Record<string, unknown> = {}) {
 
 function open() {
   clearTimeout(retryTimer);
-  const url = session.server.replace(/^http/, "ws") + "/api/gateway?access_token=" + encodeURIComponent(session.token);
+  const url = session.server.replace(/^http/, "ws") + "/api/gateway?access_token=" + encodeURIComponent(session.token) + (quiet ? "&quiet=1" : "");
   useStore.setState({ conn: "connecting" });
   const sock = new WebSocket(url);
   ws = sock;

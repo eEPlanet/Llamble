@@ -98,7 +98,9 @@ public class MainActivity extends Activity {
 
         if (resumed) bridge.send("resume");
         else if (saved != null) web.restoreState(saved);
-        else web.loadUrl(ORIGIN + "/index.html");
+        // opened only to show a ringing call: the page connects quietly (you don't show as
+        // online to anyone until you answer or use the app)
+        else web.loadUrl(ORIGIN + "/index.html" + (getIntent() != null && getIntent().getStringExtra("ring_call") != null ? "?ring=1" : ""));
 
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
             requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQ_NOTIF);

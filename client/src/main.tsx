@@ -1,7 +1,8 @@
 import React from "react";
 import { applyTheme } from "./theme";
 applyTheme();
-import { checkGateway } from "./gateway";
+import { checkGateway, isQuiet, ringQuiet, wake } from "./gateway";
+import { useCalls } from "./calls";
 import { session } from "./api";
 // first: inside the Android app this sets up notifications before anything uses them
 import { androidListener, androidSend, installBack, isAndroidApp, onAndroid } from "./android";
@@ -99,11 +100,13 @@ if (isAndroidApp && !isOverlay) {
     if (m.event === "leave-voice") leaveVoice();
     if (m.event === "resume") checkGateway();
     // a tapped notification from the listener: open that chat
+    if (m.event === "open-channel" && m.channel_id) wake();
     if (m.event === "open-channel" && m.channel_id) selectChannel((m.guild_id as string) || homeOf(useStore.getState().channels[String(m.channel_id)]), String(m.channel_id));
     // "Answer" on the phone's incoming-call screen (the app may only just be starting)
-    if (m.event === "answer-call" && m.channel_id) answerWhenReady(String(m.channel_id));
+    if (m.event === "answer-call" && m.channel_id) (wake(), answerWhenReady(String(m.channel_id)));
     // the phone was woken by a ringing call: show it ringing (Accept / Decline), never answer
     if (m.event === "ring-call" && m.channel_id) {
+      ringQuiet();
       const age = Date.now() - Number(m.at || Date.now());
       if (age < 30_000)
         import("./calls").then(({ useCalls, showIncoming }) => {
@@ -154,3 +157,14 @@ function answerWhenReady(cid: string) {
   const off = useStore.subscribe(() => go() && (off(), clearTimeout(t)));
   const t = setTimeout(off, 30_000);
 }
+
+// a phone opened only by a ringing call: the first real tap or key (anything but the
+// Accept / Decline screen) means they're using the app, so they show online
+for (const ev of ["pointerdown", "keydown"])
+  window.addEventListener(
+    ev,
+    () => {
+      if (isQuiet() && !useCalls.getState().incoming) wake();
+    },
+    true,
+  );

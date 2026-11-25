@@ -13,12 +13,16 @@ use std::time::{Duration, Instant};
 #[derive(Deserialize)]
 pub struct GwQ {
     pub access_token: Option<String>,
+    /// opened only to show a ringing call: don't show this person online (yet)
+    #[serde(default)]
+    pub quiet: Option<u8>,
 }
 
 pub async fn upgrade(State(state): State<Shared>, Query(q): Query<GwQ>, ws: WebSocketUpgrade) -> Result<Response, crate::error::AppError> {
     let token = q.access_token.ok_or_else(crate::error::AppError::unauthorized)?;
     let auth = auth_token(&state, &token).await?;
-    Ok(ws.max_message_size(64 * 1024).on_upgrade(move |sock| session(state, auth, sock)))
+    let quiet = q.quiet == Some(1);
+    Ok(ws.max_message_size(64 * 1024).on_upgrade(move |sock| session(state, auth, sock, quiet)))
 }
 
 async fn ready_payload(state: &Shared, auth: &AuthUser) -> anyhow::Result<Value> {
@@ -50,7 +54,7 @@ async fn ready_payload(state: &Shared, auth: &AuthUser) -> anyhow::Result<Value>
     let related = state.related_users(&auth.id).await;
     let presences: Vec<Value> = related
         .iter()
-        .filter(|u| state.hub.is_online(u) && status_of(state, u) != "invisible")
+        .filter(|u| state.hub.shown(u) && status_of(state, u) != "invisible")
         .map(|u| json!({ "user_id": u, "status": status_of(state, u), "game": game_of(u), "hidden": hidden(u) }))
         .collect();
     let voice: Vec<Value> = state
@@ -244,7 +248,12 @@ async fn load_status(state: &Shared, uid: &str) {
     }
 }
 
-async fn session(state: Shared, auth: AuthUser, sock: WebSocket) {
+/// What others see right now: offline when nothing of theirs is shown (only a ringing phone).
+fn visible_status(state: &Shared, uid: &str) -> String {
+    if state.hub.shown(uid) { shown_status(state, uid) } else { "offline".into() }
+}
+
+async fn session(state: Shared, auth: AuthUser, sock: WebSocket, quiet: bool) {
     let (mut sink, mut stream) = sock.split();
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
 
@@ -254,8 +263,12 @@ async fn session(state: Shared, auth: AuthUser, sock: WebSocket) {
     // people could be missing from lists after everyone reconnected at once (restarts).
     let worker_tx = tx.clone();
     load_status(&state, &auth.id).await;
-    let (conn_id, first) = state.hub.register(&auth.id, tx);
-    if first {
+    let shown_before = state.hub.shown(&auth.id);
+    let (conn_id, _first) = state.hub.register(&auth.id, tx);
+    if quiet {
+        state.hub.set_quiet(conn_id, true);
+    }
+    if !quiet && !shown_before {
         // (an invisible person coming online stays "offline" to everyone)
         let status = shown_status(&state, &auth.id);
         state.emit_related(&auth.id, "PRESENCE_UPDATE", &json!({ "user_id": auth.id, "status": status, "hidden": hidden(&auth.id) })).await;
@@ -322,15 +335,28 @@ async fn session(state: Shared, auth: AuthUser, sock: WebSocket) {
                                     if status_of(&state, &auth.id) == "invisible" || hidden(&auth.id) {
                                         set_game(&state, &auth.id, None).await;
                                     }
-                                    let shown = shown_status(&state, &auth.id);
+                                    let shown = visible_status(&state, &auth.id);
                                     state.emit_related(&auth.id, "PRESENCE_UPDATE", &json!({ "user_id": auth.id, "status": shown, "hidden": hidden(&auth.id) })).await;
                                     // the person's other devices pick up the change too
                                     state.hub.send_user(&auth.id, "MY_STATUS", &json!({ "status": status_of(&state, &auth.id), "hide_activity": hidden(&auth.id) }));
                                 }
                             }
+                            Some("awake") => {
+                                // the person is really using this device now (answered, or
+                                // opened the app themselves): show them online
+                                if state.hub.is_quiet(conn_id) {
+                                    let before = state.hub.shown(&auth.id);
+                                    state.hub.set_quiet(conn_id, false);
+                                    if !before {
+                                        let status = shown_status(&state, &auth.id);
+                                        state.emit_related(&auth.id, "PRESENCE_UPDATE", &json!({ "user_id": auth.id, "status": status, "game": game_of(&auth.id), "hidden": hidden(&auth.id) })).await;
+                                    }
+                                }
+                            }
                             Some("viewing") => {
-                                // the chat this device has open (and is looking at), or null
-                                let cid = v["channel_id"].as_str().map(str::to_string);
+                                // the chat this device has open (and is looking at), or null;
+                                // a phone that's only ringing isn't "reading" anything
+                                let cid = if state.hub.is_quiet(conn_id) { None } else { v["channel_id"].as_str().map(str::to_string) };
                                 let ok = match &cid {
                                     Some(c) => match crate::models::load_channel(&state.db, c).await {
                                         Ok(ch) => ch.guild_id.is_some() && ch.kind == "text" && crate::perms::require_channel(&state.db, &ch, &auth.id, crate::perms::VIEW).await.is_ok(),
@@ -399,15 +425,23 @@ async fn session(state: Shared, auth: AuthUser, sock: WebSocket) {
 
     crate::bot::worker_gone(&state, conn_id);
     set_viewing(&state, conn_id, &auth.id, None).await;
-    if state.hub.unregister(&auth.id, conn_id) {
+    let was_shown = state.hub.shown(&auth.id);
+    let last = state.hub.unregister(&auth.id, conn_id);
+    if was_shown && !last && !state.hub.shown(&auth.id) {
+        // only a ringing phone is left: they look offline
+        state.emit_related(&auth.id, "PRESENCE_UPDATE", &json!({ "user_id": auth.id, "status": "offline" })).await;
+    }
+    if last {
         // grace period so a quick reconnect doesn't flap presence / drop voice
         let st = state.clone();
         let uid = auth.id.clone();
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_secs(8)).await;
-            if !st.hub.is_online(&uid) {
+            if !st.hub.shown(&uid) {
                 set_game(&st, &uid, None).await;
                 st.emit_related(&uid, "PRESENCE_UPDATE", &json!({ "user_id": uid, "status": "offline" })).await;
+            }
+            if !st.hub.is_online(&uid) {
                 // The chat connection says nothing about the call: a phone in another app can lose
                 // it while the call (a separate connection to the voice server) carries on. Who's
                 // in a call is decided by the voice server alone (voice::watch_calls); only a

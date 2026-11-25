@@ -391,6 +391,13 @@ function useSync(
     let last = -1;
     let stuck = 0;
     let quietUntil = 0;
+    // A jump takes time to load (a server converting the movie starts over at the new spot),
+    // and the room keeps going meanwhile: jumping to where the room IS lands behind again, and
+    // again, forever ("loading" until someone pauses). So time each jump, and once one has
+    // landed behind, jump to where the room WILL be when it's loaded.
+    let jumpedAt = 0;
+    let loadMs = 0;
+    let chases = 0;
     const line = () => {
       const want = targetMs(cid);
       const cur = io.current.get();
@@ -398,6 +405,7 @@ function useSync(
       if (want === null || !cur || !st || st.item.id !== item.id) return;
       if (!st.playing) {
         // paused: everyone on the same frame
+        chases = 0;
         io.current.set(Math.abs(cur.pos - want) > 300 ? want : null, false, 1);
         return;
       }
@@ -406,12 +414,24 @@ function useSync(
         io.current.set(null, true, 1);
         return;
       }
+      if (jumpedAt) {
+        loadMs = Math.min(20000, Date.now() - jumpedAt);
+        jumpedAt = 0;
+      }
       stuck = !cur.paused && Math.abs(cur.pos - last) < 100 ? stuck + 1 : 0;
       last = cur.pos;
       const off = cur.pos - want; // ahead > 0, behind < 0
       const t = Date.now();
+      if (Math.abs(off) < 1500) chases = 0;
       if ((Math.abs(off) > 5000 || stuck >= 2 || cur.paused) && t >= quietUntil) {
-        io.current.set(Math.abs(off) > 1000 || stuck >= 2 ? want : null, true, 1);
+        const jump = Math.abs(off) > 1000 || stuck >= 2;
+        // behind after a jump already: aim ahead by how long the last one took to load
+        const lead = jump && off < 0 && chases > 0 ? loadMs + 1000 : 0;
+        io.current.set(jump ? want + lead : null, true, 1);
+        if (jump) {
+          jumpedAt = t;
+          if (off < 0) chases++;
+        }
         stuck = 0;
         quietUntil = t + 8000; // give it time to settle after a jump
       } else if (Math.abs(off) > 400) {
@@ -421,7 +441,9 @@ function useSync(
       }
     };
     lineRef.current = () => {
-      quietUntil = 0;
+      // ready after loading: judge now, but not straight after our own jump (that's line()'s
+      // timing to measure; jumping again at once is what made it chase forever)
+      if (!jumpedAt) quietUntil = 0;
       line();
     };
     line();
@@ -691,7 +713,16 @@ function YouTubePlayer({ cid, item, vol }: { cid: string; item: WatchItem; vol: 
               if (e.data === 0) reportEnded(cid, item);
               if (e.data === 1) setDuration(item.id, e.target.getDuration() * 1000);
             },
-            onError: (e: any) => setProblem(e.data === 101 || e.data === 150 || e.data === 153 ? "This video's owner doesn't allow it to be played outside YouTube." : "YouTube couldn't play this video."),
+            onError: (e: any) =>
+              setProblem(
+                e.data === 101 || e.data === 150
+                  ? "This video's owner doesn't allow it to be played outside YouTube."
+                  : e.data === 152 || e.data === 153
+                    ? "YouTube wouldn't load its player here (error " + e.data + ")."
+                    : e.data === 100
+                      ? "That YouTube video is private or was removed."
+                      : "YouTube couldn't play this video.",
+              ),
           },
         });
       })

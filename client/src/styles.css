@@ -1739,3 +1739,6 @@ body.pop-body > .pop { height: 100vh; }
 .watch-split.full .watch-bar .btn { background: rgba(40, 46, 64, 0.95); color: #fff; }
 .watch-split.full .watch-bar .btn.red { background: #da373c; }
 .watch-split.full .watch-bar .btn.green, .watch-split.full .watch-bar .btn.primary { background: #1f8b4c; }
+
+/* something new on a server's board */
+.board-dot { position: absolute; top: 2px; left: 2px; width: 10px; height: 10px; border-radius: 50%; background: var(--accent, #4f8cff); border: 2px solid var(--bg-0, #0f1626); pointer-events: none; }

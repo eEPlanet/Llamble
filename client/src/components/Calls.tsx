@@ -577,7 +577,9 @@ function NoAnswer() {
   const missing = ms ? ms.users : null;
   const title = missing
     ? `${missing.map(nameOf).join(", ")} never answered`
-    : na!.reason === "declined"
+    : na!.reason === "unreachable"
+      ? `${ch.kind === "party" ? "Nobody in " + ch.name : nameOf(ch.recipients!.find((r) => r.id !== me)!.id)} can't be reached right now`
+      : na!.reason === "declined"
       ? `${ch.kind === "party" ? ch.name : nameOf(ch.recipients!.find((r) => r.id !== me)!.id)} can't talk right now`
       : `${ch.kind === "party" ? "Nobody in " + ch.name : nameOf(ch.recipients!.find((r) => r.id !== me)!.id)} answered`.replace(/ answered$/, ch.kind === "party" ? " answered" : " didn't answer");
   const start = async () => {

@@ -277,14 +277,38 @@ pub async fn add(State(state): State<Shared>, auth: AuthUser, Path(cid): Path<St
     let (kind, src, title) = match req.kind.as_str() {
         "youtube" | "link" | "url" => {
             if let Some(id) = youtube_id(&req.src) {
-                ("youtube", id.clone(), if title_in.is_empty() { "YouTube video".to_string() } else { title_in })
+                // the video's real title (from its page, cached like link previews)
+                let title = if title_in.is_empty() {
+                    let e = crate::api::embeds::unfurl_one(&state, &format!("https://www.youtube.com/watch?v={id}")).await;
+                    e.and_then(|e| e["title"].as_str().map(|t| t.trim_end_matches(" - YouTube").to_string())).filter(|t| !t.is_empty()).unwrap_or_else(|| "YouTube video".to_string())
+                } else {
+                    title_in
+                };
+                ("youtube", id.clone(), title)
             } else {
                 let u = url::Url::parse(req.src.trim()).map_err(|_| AppError::bad("that isn't a link"))?;
                 if !["http", "https"].contains(&u.scheme()) {
                     return Err(AppError::bad("links must start with http:// or https://"));
                 }
+                let host = u.host_str().unwrap_or("").trim_start_matches("www.").trim_start_matches("mobile.").to_string();
+                if ["x.com", "twitter.com", "fixupx.com", "vxtwitter.com"].contains(&host.as_str()) {
+                    return Err(AppError::bad("X (Twitter) videos can't play in a Watch Party: X doesn't let its videos play outside X. Use a YouTube link or a direct link to a video file."));
+                }
                 let name = u.path_segments().and_then(|s| s.last()).filter(|s| !s.is_empty()).unwrap_or(u.host_str().unwrap_or("Video")).to_string();
-                ("url", u.to_string(), if title_in.is_empty() { name } else { title_in })
+                // a web page isn't a video: say so now instead of queueing something that can't play
+                let looks_like_file = name.rsplit_once('.').map(|(_, ext)| ["mp4", "m4v", "webm", "mov", "mkv", "m3u8", "ogv", "mp3", "m4a"].contains(&ext.to_lowercase().as_str())).unwrap_or(false);
+                let mut title = title_in;
+                if !looks_like_file {
+                    if let Some(e) = crate::api::embeds::unfurl_one(&state, u.as_str()).await {
+                        if e["type"] == "link" {
+                            return Err(AppError::bad("That link is a web page, not a video. Paste a YouTube link or a direct link to a video file (like .mp4)."));
+                        }
+                        if title.is_empty() {
+                            title = e["title"].as_str().unwrap_or("").to_string();
+                        }
+                    }
+                }
+                ("url", u.to_string(), if title.is_empty() { name } else { title })
             }
         }
         "jellyfin" => {
@@ -318,6 +342,7 @@ pub async fn add(State(state): State<Shared>, auth: AuthUser, Path(cid): Path<St
         return Err(AppError::bad("the queue is full (100)"));
     }
     let id = new_id();
+    let title: String = title.chars().take(120).collect();
     sqlx::query("INSERT INTO watch_items (id, channel_id, added_by, kind, src, title, created_at) VALUES (?,?,?,?,?,?,?)")
         .bind(&id)
         .bind(&cid)

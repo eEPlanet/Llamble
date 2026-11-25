@@ -58,6 +58,11 @@ pub async fn stream(auth: AuthUser) -> Sse<impl futures::Stream<Item = Result<Ev
     Sse::new(hello.chain(notices)).keep_alive(KeepAlive::new().interval(Duration::from_secs(180)).text("still here"))
 }
 
+/// Is this person's phone listening for notices (and so can ring) right now?
+pub fn listening(user: &str) -> bool {
+    LISTENERS.get(user).map(|v| !v.is_empty()).unwrap_or(false)
+}
+
 fn send(user: &str, notice: &Value) {
     if let Some(v) = LISTENERS.get(user) {
         let s = notice.to_string();

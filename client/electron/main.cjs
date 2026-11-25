@@ -750,6 +750,14 @@ app.whenReady().then(() => {
   ses.setPermissionRequestHandler((_wc, permission, cb) => cb(allowed.has(permission)));
   ses.setPermissionCheckHandler((_wc, permission) => allowed.has(permission));
 
+  // The app's pages load from files, which send no address with requests. YouTube's player
+  // refuses to start without one (its "error 153"), so its requests say they come from Llamble.
+  ses.webRequest.onBeforeSendHeaders({ urls: ["https://www.youtube-nocookie.com/*", "https://www.youtube.com/*"] }, (d, cb) => {
+    const h = d.requestHeaders;
+    if (!h.Referer && !h.referer) h.Referer = "https://llamble.com/";
+    cb({ requestHeaders: h });
+  });
+
   // Screen share: renderer picks a source first (our own picker UI), then calls getDisplayMedia.
   ses.setDisplayMediaRequestHandler(async (_req, cb) => {
     try {
