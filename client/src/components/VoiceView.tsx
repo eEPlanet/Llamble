@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { HearButton } from "./HearButton";
 import { Track, type Participant } from "livekit-client";
 import { memberName, useStore } from "../store";
 import type { Channel } from "../types";
@@ -338,6 +339,7 @@ export function VoiceView({ channel }: { channel: Channel }) {
         >
           <Icon name={v.deafened ? "deaf" : "headphones"} size={22} />
         </button>
+        <HearButton call />
         <button
           className="call-btn hang"
           onClick={() => leaveVoice()}

@@ -228,6 +228,8 @@ export interface VoiceState {
   deafened: boolean;
   video: boolean;
   screen: boolean;
+  /** talking with friends only: only their friends hear them */
+  friends_only?: boolean;
 }
 
 export interface GuildPayload {

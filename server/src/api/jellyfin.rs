@@ -65,6 +65,30 @@ fn not_set() -> AppError {
 }
 
 /// Answers from `allowed`, for a few minutes (a poster grid asks for hundreds at once).
+static BOXSETS: once_cell::sync::Lazy<dashmap::DashMap<String, (Vec<String>, i64)>> = once_cell::sync::Lazy::new(Default::default);
+
+/// Where shared items can be: each shared library, then each collection (box set) in them.
+/// A collection's movies aren't filed under it: they live in their own library and are only
+/// linked, so a movie shared through a collection is found by asking the collection.
+async fn places(j: &Jf) -> Vec<String> {
+    let key = format!("{}|{}", j.url, j.libs.join(","));
+    let now = crate::error::now_ms();
+    let sets = match BOXSETS.get(&key).filter(|v| now - v.1 < 5 * 60_000).map(|v| v.0.clone()) {
+        Some(s) => s,
+        None => {
+            let mut s = vec![];
+            for lib in &j.libs {
+                if let Ok(v) = get_json(j, &format!("/Items?ParentId={lib}&Recursive=true&IncludeItemTypes=BoxSet&Limit=500")).await {
+                    s.extend(v["Items"].as_array().cloned().unwrap_or_default().iter().filter_map(|it| it["Id"].as_str().map(String::from)));
+                }
+            }
+            BOXSETS.insert(key, (s.clone(), now));
+            s
+        }
+    };
+    j.libs.iter().cloned().chain(sets).collect()
+}
+
 static ALLOWED: once_cell::sync::Lazy<dashmap::DashMap<String, (bool, i64)>> = once_cell::sync::Lazy::new(Default::default);
 
 /// Is this Jellyfin item inside one of the shared libraries? Asked of each library ("is this
@@ -82,7 +106,7 @@ async fn allowed(j: &Jf, id: &str) -> bool {
         }
     }
     let mut ok = false;
-    for lib in &j.libs {
+    for lib in places(j).await {
         if let Ok(v) = get_json(j, &format!("/Items?ParentId={lib}&Recursive=true&Ids={id}&Limit=1")).await {
             if v["Items"].as_array().map(|a| !a.is_empty()).unwrap_or(false) {
                 ok = true;
@@ -97,11 +121,22 @@ async fn allowed(j: &Jf, id: &str) -> bool {
     ok
 }
 
-/// One item, asked for the way every Jellyfin version answers (older ones have no
-/// GET /Items/{id}; a list with one id works everywhere).
+/// One item, looked up inside the shared libraries: the same kind of request as the library list
+/// and `allowed`, which every Jellyfin answers. (Older ones have no GET /Items/{id}, and some
+/// answer 400 Bad Request to an item list that names no library.)
 async fn item(j: &Jf, id: &str, fields: &str) -> ApiResult<Value> {
-    let v = get_json(j, &format!("/Items?Ids={id}&Recursive=true&Fields={fields}")).await?;
-    v["Items"].get(0).cloned().ok_or_else(AppError::not_found)
+    let mut last = None;
+    for lib in places(j).await {
+        match get_json(j, &format!("/Items?ParentId={lib}&Recursive=true&Ids={id}&Fields={fields}&Limit=1")).await {
+            Ok(v) => {
+                if let Some(it) = v["Items"].get(0) {
+                    return Ok(it.clone());
+                }
+            }
+            Err(e) => last = Some(e),
+        }
+    }
+    Err(last.unwrap_or_else(AppError::not_found))
 }
 
 fn item_brief(it: &Value) -> Value {
@@ -109,6 +144,7 @@ fn item_brief(it: &Value) -> Value {
         "Movie" => "movie",
         "Series" => "series",
         "Episode" => "episode",
+        "BoxSet" => "collection",
         _ => "video",
     };
     let mut title = it["Name"].as_str().unwrap_or("Untitled").to_string();
@@ -160,6 +196,9 @@ pub struct BrowseQ {
     /// a series: list its episodes
     #[serde(default)]
     pub series: Option<String>,
+    /// a collection: list what's in it
+    #[serde(default)]
+    pub collection: Option<String>,
 }
 
 /// GET /api/watch/jellyfin/items?q=&series= — movies, shows and videos in the shared libraries.
@@ -174,10 +213,18 @@ pub async fn items(State(state): State<Shared>, _auth: AuthUser, Query(bq): Quer
         let list: Vec<Value> = v["Items"].as_array().cloned().unwrap_or_default().iter().map(item_brief).collect();
         return Ok(Json(json!({ "items": list })));
     }
+    if let Some(cid) = bq.collection.filter(|s| !s.is_empty()) {
+        if !allowed(&j, &cid).await {
+            return Err(AppError::not_found());
+        }
+        let v = get_json(&j, &format!("/Items?ParentId={cid}&SortBy=ProductionYear,SortName&{fields}")).await?;
+        let list: Vec<Value> = v["Items"].as_array().cloned().unwrap_or_default().iter().map(item_brief).collect();
+        return Ok(Json(json!({ "items": list })));
+    }
     let q: String = bq.q.chars().filter(|c| !c.is_control()).take(80).collect();
     let mut out = vec![];
     for lib in &j.libs {
-        let mut path = format!("/Items?ParentId={lib}&Recursive=true&IncludeItemTypes=Movie,Series,Video&SortBy=SortName&Limit=300&{fields}");
+        let mut path = format!("/Items?ParentId={lib}&Recursive=true&IncludeItemTypes=Movie,Series,Video,BoxSet&SortBy=SortName&Limit=300&{fields}");
         if !q.trim().is_empty() {
             path.push_str(&format!("&SearchTerm={}", url::form_urlencoded::byte_serialize(q.trim().as_bytes()).collect::<String>()));
         }
@@ -197,6 +244,9 @@ pub async fn queue_title(state: &Shared, id: &str) -> ApiResult<String> {
     let v = item(&j, &id, "ProductionYear,RunTimeTicks").await?;
     if v["Type"] == "Series" {
         return Err(AppError::bad("pick an episode"));
+    }
+    if v["Type"] == "BoxSet" {
+        return Err(AppError::bad("open the collection and pick a movie"));
     }
     Ok(item_brief(&v)["title"].as_str().unwrap_or("Untitled").to_string())
 }
@@ -224,7 +274,14 @@ fn check_token(state: &Shared, tok: &str, id: &str) -> bool {
 
 /// POST /api/watch/jellyfin/{id}/session — what the player needs: subtitles, length, and the
 /// signed address for converted (HLS) playback.
-pub async fn session(State(state): State<Shared>, auth: AuthUser, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+#[derive(Deserialize, Default)]
+pub struct SessionQ {
+    /// the device can play HEVC (H.265) itself
+    #[serde(default)]
+    pub hevc: Option<u8>,
+}
+
+pub async fn session(State(state): State<Shared>, auth: AuthUser, Path(id): Path<String>, Query(sq): Query<SessionQ>) -> ApiResult<Json<Value>> {
     let j = jf(&state).ok_or_else(not_set)?;
     if !allowed(&j, &id).await {
         return Err(AppError::not_found());
@@ -240,17 +297,32 @@ pub async fn session(State(state): State<Shared>, auth: AuthUser, Path(id): Path
     let video = streams.iter().find(|s| s["Type"] == "Video").cloned().unwrap_or(Value::Null);
     let audio = streams.iter().find(|s| s["Type"] == "Audio").cloned().unwrap_or(Value::Null);
     let container = src["Container"].as_str().unwrap_or("").to_lowercase();
-    // what browsers play reliably as-is
+    let vcodec = video["Codec"].as_str().unwrap_or("").to_lowercase();
+    let is_hevc = vcodec == "hevc" || vcodec == "h265";
+    let can_hevc = sq.hevc == Some(1);
+    // what this device plays as-is
     let direct = ["mp4", "m4v", "mov", "webm"].iter().any(|c| container.split(',').any(|x| x == *c))
-        && ["h264", "vp8", "vp9", "av1"].contains(&video["Codec"].as_str().unwrap_or("").to_lowercase().as_str())
+        && (["h264", "vp8", "vp9", "av1"].contains(&vcodec.as_str()) || (is_hevc && can_hevc))
         && ["aac", "mp3", "opus", "vorbis", "flac", ""].contains(&audio["Codec"].as_str().unwrap_or("").to_lowercase().as_str());
+    // Otherwise Jellyfin streams it in pieces (HLS). The picture is only re-encoded when it has to
+    // be: H.264, or HEVC on a device that plays HEVC (most 4K files), are repackaged as they are,
+    // full quality and almost no work for the server. Anything else becomes 1080p H.264 at a good
+    // bitrate: converting 4K as it plays is more than most servers can keep up with (choppy), and
+    // Jellyfin's default bitrate is low for it (blocky).
+    let video_args = if is_hevc && can_hevc {
+        "VideoCodec=hevc,h264&SegmentContainer=mp4&AllowVideoStreamCopy=true&MaxStreamingBitrate=200000000"
+    } else if vcodec == "h264" {
+        "VideoCodec=h264&SegmentContainer=ts&AllowVideoStreamCopy=true&MaxStreamingBitrate=200000000"
+    } else {
+        "VideoCodec=h264&SegmentContainer=ts&MaxWidth=1920&MaxHeight=1080&VideoBitrate=10000000&MaxStreamingBitrate=10320000"
+    };
     Ok(Json(json!({
         "id": id,
         "title": item_brief(&v)["title"],
         "duration_ms": v["RunTimeTicks"].as_i64().map(|t| t / 10_000),
         "media_source_id": src["Id"].as_str().unwrap_or(&id),
         "direct": direct,
-        "hls": format!("/api/watch/jf/{}/{id}/hls/master.m3u8?MediaSourceId={}&VideoCodec=h264&AudioCodec=aac&TranscodingMaxAudioChannels=2&SegmentContainer=ts&MinSegments=1&BreakOnNonKeyFrames=true&DeviceId=llamble-{}&PlaySessionId={}",
+        "hls": format!("/api/watch/jf/{}/{id}/hls/master.m3u8?MediaSourceId={}&{video_args}&AudioCodec=aac&AllowAudioStreamCopy=true&TranscodingMaxAudioChannels=2&MinSegments=1&BreakOnNonKeyFrames=true&DeviceId=llamble-{}&PlaySessionId={}",
             path_token(&state, &auth.id, &id), src["Id"].as_str().unwrap_or(&id), auth.id, crate::error::new_id()),
         "subs": subs,
     })))

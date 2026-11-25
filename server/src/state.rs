@@ -117,6 +117,9 @@ pub struct VoiceState {
     pub deafened: bool,
     pub video: bool,
     pub screen: bool,
+    /// talking with friends only: only friends hear them, and they hear only friends
+    #[serde(default)]
+    pub friends_only: bool,
 }
 
 #[derive(Default)]

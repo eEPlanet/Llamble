@@ -451,7 +451,32 @@ pub async fn left_room(state: &Shared, cid: &str, uid: &str) {
             }
         }
     }
+    // the last one out: hold the movie's place until someone comes back
+    if room_people(state, cid).is_empty() {
+        if let Some((_, true, pos, at)) = current(state, cid).await {
+            let now = crate::error::now_ms();
+            let here = (pos + (now - at)).max(0);
+            let _ = sqlx::query("UPDATE watch_now SET playing = 0, pos_ms = ?, at_ms = ? WHERE channel_id = ?").bind(here).bind(now).bind(cid).execute(&state.db).await;
+            EMPTY_HOLD.insert(cid.to_string());
+        }
+    }
     changed(state, &ch).await;
+}
+
+/// Watch rooms whose movie was stopped because everyone left (not paused by anyone).
+static EMPTY_HOLD: once_cell::sync::Lazy<dashmap::DashSet<String>> = once_cell::sync::Lazy::new(Default::default);
+
+/// Someone joined a Watch room: if its movie stopped because everyone had left, it carries on
+/// from where it was.
+pub async fn someone_came_back(state: &Shared, cid: &str) {
+    if EMPTY_HOLD.remove(cid).is_none() {
+        return;
+    }
+    let Ok(ch) = load_channel(&state.db, cid).await else { return };
+    if current(state, cid).await.map(|c| !c.1).unwrap_or(false) {
+        let _ = sqlx::query("UPDATE watch_now SET playing = 1, at_ms = ? WHERE channel_id = ?").bind(crate::error::now_ms()).bind(cid).execute(&state.db).await;
+        changed(state, &ch).await;
+    }
 }
 
 /// POST /api/channels/{cid}/watch/ask-to-talk — a held guest asks.

@@ -26,7 +26,7 @@ try:
     assert "API key" in str(r), r
     call("PUT", "/api/admin/settings", A, json={"jellyfin_key": "test-jf-key"})
     libs = call("GET", "/api/watch/jellyfin/libraries", A)["libraries"]
-    assert [l["name"] for l in libs] == ["Movies", "Home Videos"] and not any(l["shared"] for l in libs), libs
+    assert [l["name"] for l in libs] == ["Movies", "Home Videos", "Collections", "More Movies"] and not any(l["shared"] for l in libs), libs
     call("GET", "/api/watch/jellyfin/libraries", J, expect=403)
     call("PUT", "/api/admin/settings", A, json={"jellyfin_libraries": ["movielib"]})
     assert call("GET", "/api/watch/library", J)["jellyfin"] is True
@@ -39,6 +39,19 @@ try:
     assert eps[0]["title"] == "A Show · S1E1 · Pilot" and eps[0]["kind"] == "episode", eps
     call("GET", "/api/watch/jellyfin/items?series=homelib", J, expect=404)
 
+    # ---- collections: a shared Collections library shows each collection like a folder; its
+    # movies (only linked, living in a library that isn't shared) can be opened and played
+    call("POST", "/api/watch/jellyfin/c1/session", J, expect=404)  # not shared yet
+    call("PUT", "/api/admin/settings", A, json={"jellyfin_libraries": ["movielib", "boxlib"]})
+    items = call("GET", "/api/watch/jellyfin/items", J)["items"]
+    coll = [i for i in items if i["kind"] == "collection"]
+    assert [i["title"] for i in coll] == ["The Trilogy"], items
+    inside = call("GET", "/api/watch/jellyfin/items?collection=b1", J)["items"]
+    assert [(i["title"], i["kind"]) for i in inside] == [("Part One", "movie")], inside
+    call("GET", "/api/watch/jellyfin/items?collection=homelib", J, expect=404)
+    assert call("POST", "/api/watch/jellyfin/c1/session", J)["direct"] is True
+    call("PUT", "/api/admin/settings", A, json={"jellyfin_libraries": ["movielib"]})
+
     # ---- the private library can't be reached in any way
     for path in ("/api/watch/jellyfin/h1/stream", "/api/watch/jellyfin/h1/poster", "/api/watch/jellyfin/h1/subs/2"):
         call("GET", path, J, expect=404)
@@ -47,7 +60,14 @@ try:
     # ---- playing: direct when the browser can, converted (HLS) otherwise; subtitles
     s1 = call("POST", "/api/watch/jellyfin/m1/session", J)
     assert s1["direct"] is True and s1["subs"][0]["label"] == "English" and s1["duration_ms"] == 7_200_000, s1
-    assert call("POST", "/api/watch/jellyfin/m2/session", J)["direct"] is False
+    s2 = call("POST", "/api/watch/jellyfin/m2/session", J)
+    assert s2["direct"] is False
+    # 4K-style HEVC in MKV: a device that plays HEVC gets it repackaged as it is; one that
+    # doesn't gets 1080p H.264 at a set bitrate; plain H.264 is never re-encoded
+    assert "MaxWidth=1920" in s2["hls"] and "VideoBitrate=10000000" in s2["hls"] and "VideoCodec=h264&" in s2["hls"], s2["hls"]
+    s2h = call("POST", "/api/watch/jellyfin/m2/session?hevc=1", J)
+    assert "VideoCodec=hevc,h264" in s2h["hls"] and "SegmentContainer=mp4" in s2h["hls"] and "MaxWidth" not in s2h["hls"], s2h["hls"]
+    assert "AllowVideoStreamCopy=true" in s1["hls"] and "MaxWidth" not in s1["hls"], s1["hls"]
     r = requests.get(B + "/api/watch/jellyfin/m1/stream", headers={**H(J), "Range": "bytes=100-199"})
     assert r.status_code == 206 and len(r.content) == 100 and r.headers["content-range"].startswith("bytes 100-199/"), (r.status_code, r.headers)
     assert requests.get(B + "/api/watch/jellyfin/m1/stream").status_code == 401  # needs signing in
@@ -71,6 +91,12 @@ try:
     assert r["now"]["item"]["kind"] == "jellyfin" and r["now"]["item"]["title"] == "The Big Film", r
     call("POST", f"/api/channels/{w['id']}/watch/queue", J, expect=400, json={"kind": "jellyfin", "src": "h1"})
     call("POST", f"/api/channels/{w['id']}/watch/queue", J, expect=400, json={"kind": "jellyfin", "src": "s1"})  # pick an episode
+    # a movie from a shared collection queues; the collection itself doesn't
+    call("PUT", "/api/admin/settings", A, json={"jellyfin_libraries": ["movielib", "boxlib"]})
+    r = call("POST", f"/api/channels/{w['id']}/watch/queue", J, json={"kind": "jellyfin", "src": "c1"})
+    assert any(i["title"] == "Part One" for i in r["queue"]), r
+    call("POST", f"/api/channels/{w['id']}/watch/queue", J, expect=400, json={"kind": "jellyfin", "src": "b1"})
+    call("PUT", "/api/admin/settings", A, json={"jellyfin_libraries": ["movielib"]})
 
     # ---- uploaded movies: subtitles are pulled from the video; posters are uploaded
     clip = "/tmp/jf_clip.mp4"

@@ -19,6 +19,13 @@ ITEMS = {
     "e1": {"Id": "e1", "Name": "Pilot", "Type": "Episode", "SeriesName": "A Show", "ParentIndexNumber": 1, "IndexNumber": 1, "parent": "s1",
            "MediaSources": [{"Id": "e1", "Container": "mp4", "MediaStreams": [{"Type": "Video", "Codec": "h264", "Index": 0}]}]},
     "h1": {"Id": "h1", "Name": "Private Birthday", "Type": "Video", "parent": "homelib"},
+    # a Collections library: its box set only links to a movie that lives in another library
+    # (one that isn't shared), the way Jellyfin collections work
+    "boxlib": {"Id": "boxlib", "Name": "Collections", "Type": "CollectionFolder"},
+    "morelib": {"Id": "morelib", "Name": "More Movies", "Type": "CollectionFolder"},
+    "b1": {"Id": "b1", "Name": "The Trilogy", "Type": "BoxSet", "ImageTags": {"Primary": "z"}, "parent": "boxlib", "links": ["c1"]},
+    "c1": {"Id": "c1", "Name": "Part One", "Type": "Movie", "ProductionYear": 2001, "ImageTags": {}, "parent": "morelib",
+           "MediaSources": [{"Id": "c1", "Container": "mp4", "MediaStreams": [{"Type": "Video", "Codec": "h264", "Index": 0}, {"Type": "Audio", "Codec": "aac", "Index": 1}]}]},
 }
 
 def ancestors(i):
@@ -40,21 +47,25 @@ class H(BaseHTTPRequestHandler):
             return self.send(401, {"error": "no"})
         path, _, q = self.path.partition("?")
         if path == "/Library/VirtualFolders":
-            return self.send(200, [{"Name": "Movies", "ItemId": "movielib", "CollectionType": "movies"}, {"Name": "Home Videos", "ItemId": "homelib", "CollectionType": "homevideos"}])
+            return self.send(200, [{"Name": "Movies", "ItemId": "movielib", "CollectionType": "movies"}, {"Name": "Home Videos", "ItemId": "homelib", "CollectionType": "homevideos"},
+                                   {"Name": "Collections", "ItemId": "boxlib", "CollectionType": "boxsets"}, {"Name": "More Movies", "ItemId": "morelib", "CollectionType": "movies"}])
         if path == "/Items":
             pm = re.search(r"ParentId=(\w+)", q)
-            if not pm:  # one item by id (how every version can be asked)
-                i = re.search(r"Ids=(\w+)", q).group(1)
-                return self.send(200, {"Items": [ITEMS[i]] if i in ITEMS else []})
+            if not pm:  # an item list naming no library: some Jellyfin versions answer 400
+                return self.send(400, {"error": "Bad Request"})
             parent = pm.group(1)
             term = re.search(r"SearchTerm=([^&]*)", q)
             ids = re.search(r"Ids=(\w+)", q)
             def under(i, root):
+                # a box set's movies are linked to it (asked by the box set's id), not filed under it
+                if i in ITEMS.get(root, {}).get("links", []): return True
                 return any(a["Id"] == root for a in ancestors(i))
             if ids:
                 i = ids.group(1)
                 return self.send(200, {"Items": [ITEMS[i]] if i in ITEMS and under(i, parent) else []})
-            items = [v for k, v in ITEMS.items() if v["Type"] in ("Movie", "Series", "Video") and under(k, parent)]
+            tm = re.search(r"IncludeItemTypes=([\w,]+)", q)
+            types = tm.group(1).split(",") if tm else ["Movie", "Series", "Video", "BoxSet", "Episode"]
+            items = [v for k, v in ITEMS.items() if v["Type"] in types and under(k, parent)]
             if term:
                 t = term.group(1).replace("+", " ").lower()
                 items = [v for v in items if t in v["Name"].lower()]

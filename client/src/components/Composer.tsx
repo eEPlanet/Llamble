@@ -6,6 +6,7 @@ import { addPending, can, memberName, patchPending, useStore } from "../store";
 import { P, type Channel, type FileObj, type Message, type User } from "../types";
 import { setReply, toast, useUI } from "../ui";
 import { VoiceRecorder } from "./VoiceMessage";
+import { isPhone } from "../phone";
 import { Avatar, BotTag, Icon } from "./common";
 import { EmojiPicker, GifPicker } from "./Pickers";
 
@@ -47,8 +48,10 @@ export const Composer = forwardRef<ComposerHandle, { channel: Channel; placehold
     drafts[channel.id] = text;
   }, [text, channel.id]);
 
+  // ready to type when a chat opens; on phones only when replying (focusing pops the keyboard
+  // up over the chat, or over the player in a Watch room)
   useEffect(() => {
-    ta.current?.focus();
+    if (!isPhone() || replyTo) ta.current?.focus();
   }, [channel.id, replyTo]);
 
   // global "type anywhere to focus composer"

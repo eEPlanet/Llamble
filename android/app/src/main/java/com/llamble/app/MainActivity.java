@@ -403,6 +403,8 @@ public class MainActivity extends Activity {
             fullscreenCallback = cb;
             root.addView(view, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
             root.requestApplyInsets();
+            // a full-screen movie: sideways (either way round), like a video app
+            setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
         }
 
         @Override
@@ -411,6 +413,7 @@ public class MainActivity extends Activity {
             fullscreenView = null;
             fullscreenCallback = null;
             root.requestApplyInsets();
+            setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
         }
     }
 

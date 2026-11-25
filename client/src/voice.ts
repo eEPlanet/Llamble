@@ -34,6 +34,9 @@ export interface VoiceUI {
   held: boolean;
   /** "Mute people": everyone else's voice is silenced for me (shows and movies still play) */
   peopleMuted: boolean;
+  /** "Friends only": I hear only my friends here, and only they hear my voice (my screen and
+   * camera still go to everyone) */
+  friendsOnly: boolean;
   canVideo: boolean;
   error: string | null;
   version: number;
@@ -56,6 +59,7 @@ export const useVoice = create<VoiceUI>(() => ({
   canSpeak: true,
   held: false,
   peopleMuted: false,
+  friendsOnly: false,
   canVideo: true,
   error: null,
   version: 0,
@@ -373,32 +377,97 @@ function userVolume(uid: string): number {
   return Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 1;
 }
 
+/** Muted just for me: their voice is silent, whatever their volume (remembered on this device). */
+export function userMuted(uid: string): boolean {
+  return prefs.get("mute." + uid, "") === "1";
+}
+
+const isFriend = (uid: string) => useStore.getState().friends[uid]?.state === "friend";
+/** not a person: the AI, a recorder (they always get my voice) */
+const notAPerson = (uid: string) => {
+  const u = useStore.getState().users[uid];
+  return !u || !!u.is_bot;
+};
+
+/** How loud someone's voice is for me right now: my mute choices first, then their volume. */
+function voiceVolume(uid: string): number {
+  const v = vget();
+  if (v.peopleMuted || userMuted(uid)) return 0;
+  if (v.friendsOnly && !isFriend(uid) && !notAPerson(uid)) return 0;
+  return userVolume(uid);
+}
+
+/** Set everyone's voice volume from my choices (screen-share sound follows their volume only). */
+function applyVolumes() {
+  for (const p of room?.remoteParticipants.values() || []) {
+    try {
+      p.setVolume(voiceVolume(p.identity), Track.Source.Microphone);
+      p.setVolume(userVolume(p.identity), Track.Source.ScreenShareAudio);
+    } catch {}
+  }
+}
+
+/** Friends only: everyone but my friends (and the AI or a recorder) gets everything I send except
+ * my voice. Otherwise everyone gets everything. */
+function applyListeners() {
+  const lp = room?.localParticipant;
+  if (!lp) return;
+  try {
+    if (!vget().friendsOnly) return lp.setTrackSubscriptionPermissions(true);
+    const notVoice = [...lp.trackPublications.values()].filter((t) => t.source !== Track.Source.Microphone).map((t) => t.trackSid);
+    lp.setTrackSubscriptionPermissions(
+      false,
+      [...(room?.remoteParticipants.values() || [])].map((p) =>
+        isFriend(p.identity) || notAPerson(p.identity) ? { participantIdentity: p.identity, allowAll: true } : { participantIdentity: p.identity, allowAll: false, allowedTrackSids: notVoice },
+      ),
+    );
+  } catch (e) {
+    console.warn("friends only", e);
+  }
+}
+
 /** "Mute people": silence everyone else's voices for me until I turn it off. Shared screens'
  * and Watch Party sound keep playing. */
 export function setPeopleMuted(on: boolean) {
-  vset({ peopleMuted: on });
-  for (const p of room?.remoteParticipants.values() || []) {
-    try {
-      p.setVolume(on ? 0 : userVolume(p.identity), Track.Source.Microphone);
-    } catch {}
+  const wasFriends = vget().friendsOnly;
+  vset({ peopleMuted: on, friendsOnly: on ? false : wasFriends });
+  applyVolumes();
+  if (wasFriends && on) {
+    applyListeners();
+    syncServerState();
   }
+}
+
+/** "Friends only": hear only friends, and only friends hear my voice. */
+export function setFriendsOnly(on: boolean) {
+  vset({ friendsOnly: on, peopleMuted: on ? false : vget().peopleMuted });
+  applyVolumes();
+  applyListeners();
+  syncServerState();
 }
 
 export function setUserVolume(uid: string, v: number) {
   v = Math.max(0, Math.min(1, v));
   prefs.set("vol." + uid, String(v));
-  const p = room?.remoteParticipants.get(uid);
-  try {
-    p?.setVolume(vget().peopleMuted ? 0 : v);
-    p?.setVolume(v, Track.Source.ScreenShareAudio);
-  } catch (e) {
-    console.warn("volume", e);
-  }
+  applyVolumes();
 }
+
+export function setUserMuted(uid: string, on: boolean) {
+  prefs.set("mute." + uid, on ? "1" : "");
+  applyVolumes();
+}
+
+// someone became (or stopped being) a friend while friends-only is on
+useStore.subscribe((st, prev) => {
+  if (st.friends !== prev.friends && vget().friendsOnly) {
+    applyVolumes();
+    applyListeners();
+  }
+});
 
 function syncServerState() {
   const s = vget();
-  api("/api/voice/state", { method: "PATCH", body: { muted: s.muted || !s.canSpeak, deafened: s.deafened, video: s.camera, screen: s.screen } }).catch(() => {});
+  api("/api/voice/state", { method: "PATCH", body: { muted: s.muted || !s.canSpeak, deafened: s.deafened, video: s.camera, screen: s.screen, friends_only: s.friendsOnly } }).catch(() => {});
 }
 
 function applyDeafen() {
@@ -416,7 +485,7 @@ function attachAudio(track: RemoteTrack, p: RemoteParticipant) {
   audioBox.appendChild(el);
   try {
     const share = track.source === Track.Source.ScreenShareAudio;
-    p.setVolume(!share && vget().peopleMuted ? 0 : userVolume(p.identity), share ? Track.Source.ScreenShareAudio : Track.Source.Microphone);
+    p.setVolume(share ? userVolume(p.identity) : voiceVolume(p.identity), share ? Track.Source.ScreenShareAudio : Track.Source.Microphone);
   } catch (e) {
     console.warn("volume", e); // never let a volume setting stop you hearing someone
   }
@@ -545,6 +614,7 @@ async function connect(channelId: string, rejoining: boolean) {
     })
     .on(RoomEvent.ParticipantConnected, () => {
       sounds.join();
+      if (vget().friendsOnly) applyListeners();
       bump();
     })
     .on(RoomEvent.ParticipantDisconnected, (p) => {
@@ -556,8 +626,12 @@ async function connect(channelId: string, rejoining: boolean) {
     .on(RoomEvent.ActiveSpeakersChanged, (speakers: Participant[]) => !localSpeaking && vset({ speaking: speakers.map((s) => s.identity) }))
     .on(RoomEvent.TrackMuted, bump)
     .on(RoomEvent.TrackUnmuted, bump)
-    .on(RoomEvent.LocalTrackPublished, bump)
+    .on(RoomEvent.LocalTrackPublished, () => {
+      if (vget().friendsOnly) applyListeners();
+      bump();
+    })
     .on(RoomEvent.LocalTrackUnpublished, (pub) => {
+      if (vget().friendsOnly) applyListeners();
       if (pub.source === Track.Source.ScreenShare) {
         vset({ screen: false });
         syncServerState();
@@ -640,7 +714,7 @@ export async function leaveVoice(notify = true) {
   audioBox.innerHTML = "";
   stopSpeaking();
   localSpeaking = false;
-  vset({ channelId: null, status: "idle", camera: false, screen: false, speaking: [], held: false, peopleMuted: false });
+  vset({ channelId: null, status: "idle", camera: false, screen: false, speaking: [], held: false, peopleMuted: false, friendsOnly: false });
   stopPtt();
   if (r) {
     await r.disconnect();

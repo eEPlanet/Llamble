@@ -9,7 +9,8 @@ import { useUnreadNotices } from "../notifications";
 import { can, canInvite, channelSort, currentChannelId, homeOf, isMessages, isUnread, memberName, notesForMe, openGuildView, openHome, openLibrary, openMessages, openMyProfile, selectChannel, useStore, type MsgTab } from "../store";
 import { P, type Channel } from "../types";
 import { copy, openMenu, openModal, toggleCollapsed, toast, useUI } from "../ui";
-import { canShareScreen, joinVoice, leaveVoice, stopScreenShare, toggleCamera, toggleDeafen, toggleMute, setPeopleMuted, useVoice } from "../voice";
+import { canShareScreen, joinVoice, leaveVoice, stopScreenShare, toggleCamera, toggleDeafen, toggleMute, setUserMuted, setUserVolume, userMuted, useVoice } from "../voice";
+import { HearButton } from "./HearButton";
 import { Avatar, BotTag, Icon } from "./common";
 import { markGuildRead } from "./Shell";
 import { FriendsSidebar, PartiesSidebar } from "./Friends";
@@ -390,6 +391,16 @@ function ChannelRow({ ch }: { ch: Channel }) {
               {v.video && <Icon name="video" size={14} />}
               {v.muted && <Icon name="micOff" size={14} className="red" />}
               {v.deafened && <Icon name="deaf" size={14} className="red" />}
+              {v.friends_only && (
+                <span title="Friends only: only their friends hear them" className="vu-mark">
+                  <Icon name="usersHeart" size={14} className="green" />
+                </span>
+              )}
+              {v.user_id !== me && userMuted(v.user_id) && (
+                <span title="Muted by you" className="vu-mark">
+                  <Icon name="speakerOff" size={14} className="red" />
+                </span>
+              )}
             </div>
           ))}
         </div>
@@ -482,19 +493,42 @@ export function userMenu(e: React.MouseEvent, userId: string, guildId: string | 
   openMenu(e, items);
 }
 
+/** Their volume just for me, and a Mute button beside it (both remembered on this device). */
 function VolumeSlider({ userId, initial }: { userId: string; initial: number }) {
+  const [vol, setVol] = useState(initial);
+  const [muted, setMuted] = useState(userMuted(userId));
   return (
-    <label className="ctx-volume" onMouseDown={(e) => e.stopPropagation()}>
-      User Volume
-      <input
-        type="range"
-        min={0}
-        max={1}
-        step={0.05}
-        defaultValue={initial}
-        onChange={(e) => import("../voice").then((v) => v.setUserVolume(userId, Number(e.target.value)))}
-      />
-    </label>
+    <div className="ctx-volume" onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+      <div className="ctx-volume-head">
+        <span>User Volume</span>
+        <span className="muted">{muted ? "Muted" : `${Math.round(vol * 100)}%`}</span>
+      </div>
+      <div className="ctx-volume-row">
+        <input
+          type="range"
+          min={0}
+          max={1}
+          step={0.05}
+          value={vol}
+          disabled={muted}
+          aria-label="User volume"
+          onChange={(e) => {
+            const n = Number(e.target.value);
+            setVol(n);
+            setUserVolume(userId, n);
+          }}
+        />
+        <button
+          className={"btn small" + (muted ? " red" : "")}
+          onClick={() => {
+            setUserMuted(userId, !muted);
+            setMuted(!muted);
+          }}
+        >
+          {muted ? "Unmute" : "Mute"}
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -767,15 +801,7 @@ function UserPanel() {
       <button className={"icon-btn" + (v.muted ? " red" : "")} title={v.muted ? "Unmute (Ctrl+Shift+M)" : "Mute (Ctrl+Shift+M)"} onClick={toggleMute}>
         <Icon name={v.muted ? "micOff" : "mic"} size={18} />
       </button>
-      {v.channelId && (
-        <button
-          className={"icon-btn" + (v.peopleMuted ? " red" : "")}
-          title={v.peopleMuted ? "Hear people again" : "Mute people: silence everyone else's voices for you (videos, shows and screens keep playing)"}
-          onClick={() => setPeopleMuted(!v.peopleMuted)}
-        >
-          <Icon name={v.peopleMuted ? "usersOff" : "users"} size={18} />
-        </button>
-      )}
+      {v.channelId && <HearButton />}
       <button className={"icon-btn" + (v.deafened ? " red" : "")} title={v.deafened ? "Undeafen (Ctrl+Shift+D)" : "Deafen (Ctrl+Shift+D)"} onClick={toggleDeafen}>
         <Icon name={v.deafened ? "deaf" : "headphones"} size={18} />
       </button>

@@ -136,10 +136,15 @@ pub async fn join(State(state): State<Shared>, auth: AuthUser, Path(cid): Path<S
         deafened: false,
         video: false,
         screen: false,
+        friends_only: false,
     };
     state.hub.voice.insert(auth.id.clone(), vs.clone());
     broadcast_voice(&state, &cid, serde_json::to_value(&vs).unwrap()).await;
     ring_on_join(&state, &cid, &auth.id).await;
+    if ch.kind == "watch" {
+        // a movie that stopped when everyone left carries on for whoever comes back
+        crate::api::watch::someone_came_back(&state, &cid).await;
+    }
     let url = crate::voice_server::client_url(&state, &headers).await;
     Ok(Json(json!({ "url": url, "token": token, "room": cid, "can_speak": p & perms::SPEAK != 0 && !held, "held": held, "can_video": p & perms::VIDEO != 0 })))
 }
@@ -155,6 +160,7 @@ pub struct VoiceUpdate {
     pub deafened: Option<bool>,
     pub video: Option<bool>,
     pub screen: Option<bool>,
+    pub friends_only: Option<bool>,
 }
 
 pub async fn update(State(state): State<Shared>, auth: AuthUser, Json(req): Json<VoiceUpdate>) -> ApiResult<Json<Value>> {
@@ -164,6 +170,7 @@ pub async fn update(State(state): State<Shared>, auth: AuthUser, Json(req): Json
         if let Some(v) = req.deafened { e.deafened = v; }
         if let Some(v) = req.video { e.video = v; }
         if let Some(v) = req.screen { e.screen = v; }
+        if let Some(v) = req.friends_only { e.friends_only = v; }
         e.clone()
     };
     broadcast_voice(&state, &vs.channel_id, serde_json::to_value(&vs).unwrap()).await;

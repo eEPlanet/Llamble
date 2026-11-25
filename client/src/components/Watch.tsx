@@ -8,7 +8,8 @@ import { can, selectChannel, useStore } from "../store";
 import { P } from "../types";
 import type { Channel } from "../types";
 import { toast } from "../ui";
-import { joinVoice, leaveVoice, needVideo, participants, setPeopleMuted, toggleDeafen, toggleMute, useVoice } from "../voice";
+import { joinVoice, leaveVoice, needVideo, participants, setFriendsOnly, setPeopleMuted, toggleDeafen, toggleMute, useVoice } from "../voice";
+import { HearButton } from "./HearButton";
 import { goOnline } from "../viewing";
 import { canStreamFromDevice, loadWatch, startDeviceStream, stopDeviceStream, targetMs, useMyStream, useWatch, watchAction, type WatchItem, type WatchState } from "../watch";
 import { ChatView } from "./ChatView";
@@ -34,6 +35,50 @@ export function WatchView({ channel }: { channel: Channel }) {
   const kidBlocked = useStore((s) => !!s.me?.is_kid);
   // chat or the queue, beside the player (below it on a phone)
   const [side, setSide] = useState<"chat" | "queue">("chat");
+  // full screen: the player fills the screen; its controls (and the chat, if opened) sit on a bar
+  // that fades away while you watch and comes back when you move or tap
+  const [full, setFull] = useState(false);
+  const [fullChat, setFullChat] = useState(false);
+  const [bar, setBar] = useState(true);
+  const hideT = useRef<number>();
+  const wake = () => {
+    setBar(true);
+    clearTimeout(hideT.current);
+    hideT.current = window.setTimeout(() => setBar(false), 3000);
+  };
+  const toggleFull = (on: boolean) => {
+    setFull(on);
+    setFullChat(false);
+    if (on) {
+      wake();
+      // also hide the system's bars where the device allows it
+      document.documentElement
+        .requestFullscreen?.()
+        // phones: turn the movie sideways (where the device allows it)
+        .then(() => (screen.orientation as any)?.lock?.("landscape"))
+        .catch(() => {});
+    } else {
+      try {
+        (screen.orientation as any)?.unlock?.();
+      } catch {}
+      if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    }
+  };
+  useEffect(() => {
+    // Esc or the system's back gesture left full screen
+    const f = () => !document.fullscreenElement && setFull(false);
+    document.addEventListener("fullscreenchange", f);
+    return () => document.removeEventListener("fullscreenchange", f);
+  }, []);
+  useEffect(() => {
+    if (!full) return;
+    const k = (e: KeyboardEvent) => e.key === "Escape" && toggleFull(false);
+    addEventListener("keydown", k);
+    return () => removeEventListener("keydown", k);
+  }, [full]);
+  useEffect(() => {
+    if (!inRoom && full) toggleFull(false);
+  }, [inRoom]);
   useEffect(() => {
     loadWatch(cid);
     const t = setInterval(() => loadWatch(cid), 30_000);
@@ -41,7 +86,11 @@ export function WatchView({ channel }: { channel: Channel }) {
   }, [cid]);
 
   return (
-    <div className="watch-split">
+    <div
+      className={"watch-split" + (full ? " full" + (bar || fullChat ? "" : " bar-hidden") + (fullChat ? " full-chat" : "") : "")}
+      onPointerMove={full ? wake : undefined}
+      onPointerDown={full ? wake : undefined}
+    >
       <div className="watch-main">
         <header className="chat-header">
           <span className="watch-emoji">🍿</span>
@@ -60,7 +109,7 @@ export function WatchView({ channel }: { channel: Channel }) {
         </header>
         {inRoom && st ? (
           <>
-            <Player cid={cid} st={st} />
+            <Player cid={cid} st={st} full={full} onFull={toggleFull} fullChat={fullChat} onFullChat={() => setFullChat(!fullChat)} />
             <div className="call-controls watch-call">
               <button className={"call-btn" + (v.muted ? " off" : "")} onClick={toggleMute} title="Mute" disabled={!v.canSpeak}>
                 <Icon name={v.muted ? "micOff" : "mic"} size={22} />
@@ -68,9 +117,7 @@ export function WatchView({ channel }: { channel: Channel }) {
               <button className={"call-btn" + (v.deafened ? " off" : "")} onClick={toggleDeafen} title="Deafen">
                 <Icon name={v.deafened ? "deaf" : "headphones"} size={22} />
               </button>
-              <button className={"call-btn" + (v.peopleMuted ? " on" : "")} onClick={() => setPeopleMuted(!v.peopleMuted)} title="Mute people: silence everyone else's voices for you (the movie keeps playing)">
-                <Icon name="usersOff" size={22} />
-              </button>
+              <HearButton call />
               <button className="call-btn hang" onClick={() => leaveVoice()} title="Disconnect">
                 <Icon name="phoneOff" size={22} />
               </button>
@@ -106,7 +153,7 @@ export function WatchView({ channel }: { channel: Channel }) {
             🎬 Queue{st?.queue?.length ? ` (${st.queue.length})` : ""}
           </button>
         </div>
-        <div className="watch-side">{side === "chat" ? <ChatView key={cid} channel={channel} /> : st ? <Queue cid={cid} st={st} inRoom={inRoom} /> : null}</div>
+        <div className="watch-side">{side === "chat" || fullChat ? <ChatView key={cid} channel={channel} /> : st ? <Queue cid={cid} st={st} inRoom={inRoom} /> : null}</div>
       </div>
     </div>
   );
@@ -118,7 +165,7 @@ function useMe() {
 
 /** The shared player. YouTube, links and library movies play here and line up with the room;
  * a stream from someone's device is their live video. */
-function Player({ cid, st }: { cid: string; st: WatchState }) {
+function Player({ cid, st, full, onFull, fullChat, onFullChat }: { cid: string; st: WatchState; full: boolean; onFull: (on: boolean) => void; fullChat: boolean; onFullChat: () => void }) {
   const me = useMe();
   const now = st.now;
   const item = now?.item;
@@ -156,11 +203,13 @@ function Player({ cid, st }: { cid: string; st: WatchState }) {
         </div>
         {item.kind !== "device" && <Progress cid={cid} st={st} mayRun={mayRun} onSeek={(ms) => act("seek", { pos_ms: ms })} />}
         <div className="watch-controls">
+          {mayRun && item.kind !== "device" && <SeekButton cid={cid} itemId={item.id} dir={-1} onSeek={(ms) => act("seek", { pos_ms: ms })} />}
           {mayRun && item.kind !== "device" && (
             <button className="btn small" onClick={() => act(now!.playing ? "pause" : "play", { pos_ms: Math.round(targetMs(cid) || 0) })}>
               {now!.playing ? "⏸ Pause" : "▶ Play"}
             </button>
           )}
+          {mayRun && item.kind !== "device" && <SeekButton cid={cid} itemId={item.id} dir={1} onSeek={(ms) => act("seek", { pos_ms: ms })} />}
           {mayRun ? (
             <button className="btn small" onClick={() => act("next")}>
               ⏭ Next
@@ -170,11 +219,19 @@ function Player({ cid, st }: { cid: string; st: WatchState }) {
               {now!.voted ? `Voted to skip (${now!.skip_votes}/${Math.floor(st.in_room / 2) + 1})` : `Vote to skip${now!.skip_votes ? ` (${now!.skip_votes}/${Math.floor(st.in_room / 2) + 1})` : ""}`}
             </button>
           )}
-          <PeopleMute />
           <label className="watch-vol" title="Volume (just for you)">
             🔊
             <input type="range" min={0} max={1} step={0.05} value={vol} onChange={(e) => setVol(Number(e.target.value))} />
           </label>
+          <MuteChoices />
+          {full && (
+            <button className={"btn small" + (fullChat ? " primary" : "")} onClick={onFullChat}>
+              💬 Chat
+            </button>
+          )}
+          <button className="btn small" onClick={() => onFull(!full)} title={full ? "Leave full screen (Esc)" : "Full screen"}>
+            {full ? "↙ Exit full screen" : "⛶ Full screen"}
+          </button>
         </div>
         <TalkRequests cid={cid} st={st} mayRun={mayRun} />
       </div>
@@ -182,13 +239,73 @@ function Player({ cid, st }: { cid: string; st: WatchState }) {
   );
 }
 
-/** Silence everyone else's voices for me (the movie keeps playing); stays until I turn it off. */
-export function PeopleMute({ small }: { small?: boolean }) {
-  const on = useVoice((v) => v.peopleMuted);
+/** Back or forward 15 seconds. Hold it to keep going (faster the longer you hold). */
+function SeekButton({ cid, itemId, dir, onSeek }: { cid: string; itemId: string; dir: 1 | -1; onSeek: (ms: number) => void }) {
+  const dur = useWatchDuration((s) => s.ms[itemId] || 0);
+  const held = useRef<{ t: number; pos: number; steps: number } | null>(null);
+  const jump = () => {
+    const h = held.current!;
+    const step = h.steps < 4 ? 15_000 : h.steps < 10 ? 30_000 : 60_000;
+    h.pos = Math.max(0, Math.min(dur ? dur - 1000 : Infinity, h.pos + dir * step));
+    h.steps++;
+    onSeek(Math.round(h.pos));
+  };
+  const down = (e: React.PointerEvent) => {
+    e.preventDefault();
+    held.current = { t: 0, pos: targetMs(cid) || 0, steps: 0 };
+    jump();
+    const h = held.current;
+    h.t = window.setTimeout(function again() {
+      if (held.current !== h) return;
+      jump();
+      h.t = window.setTimeout(again, 350);
+    }, 500);
+  };
+  const up = () => {
+    if (held.current) clearTimeout(held.current.t);
+    held.current = null;
+  };
+  const back = dir < 0;
   return (
-    <button className={"btn small" + (on ? " primary" : "")} title="Silence everyone else's voices for you only. Turn it off to hear them again." onClick={() => setPeopleMuted(!on)}>
-      {on ? "🔇 People muted" : small ? "🔇 Mute people" : "🔇 Mute people"}
+    <button
+      className="btn small"
+      title={back ? "Back 15 seconds (hold to rewind)" : "Forward 15 seconds (hold to fast forward)"}
+      onPointerDown={down}
+      onPointerUp={up}
+      onPointerLeave={up}
+      onPointerCancel={up}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onSeek(Math.max(0, Math.min(dur ? dur - 1000 : Infinity, (targetMs(cid) || 0) + dir * 15_000)));
+        }
+      }}
+    >
+      {back ? "⟲ 15" : "15 ⟳"}
     </button>
+  );
+}
+
+/** Mute everyone else, or hear only friends (and only friends hear you): for whoever picks it. */
+function MuteChoices() {
+  const v = useVoice();
+  return (
+    <>
+      <button
+        className={"btn small" + (v.peopleMuted ? " red" : "")}
+        onClick={() => setPeopleMuted(!v.peopleMuted)}
+        title="Silence everyone else's voices for you (the movie keeps playing)"
+      >
+        🔇 {v.peopleMuted ? "Everyone muted" : "Mute everyone"}
+      </button>
+      <button
+        className={"btn small" + (v.friendsOnly ? " green" : "")}
+        onClick={() => setFriendsOnly(!v.friendsOnly)}
+        title="Hear only your friends, and only they hear you"
+      >
+        💚 {v.friendsOnly ? "Friends only: on" : "Friends only"}
+      </button>
+    </>
   );
 }
 
@@ -252,21 +369,66 @@ const useWatchDuration = create<{ ms: Record<string, number> }>(() => ({ ms: {} 
 const setDuration = (id: string, ms: number) => ms > 0 && isFinite(ms) && useWatchDuration.setState((s) => ({ ms: { ...s.ms, [id]: ms } }));
 
 /** Keep a player lined up with the room: right spot (within 1.5 s) and playing or paused. */
-function useSync(cid: string, item: WatchItem, get: () => { pos: number; paused: boolean } | null, set: (posMs: number | null, play: boolean) => void) {
+/** Keep a player lined up with the room, gently, the way watch-together players do:
+ * - a little off (under 5 s): play a touch faster or slower until it's caught up (no jumps, so
+ *   no rebuffering; a converted stream that jumps makes Jellyfin restart its conversion)
+ * - far off, or stuck on one frame: jump to the room's spot, then leave it alone for a while
+ * - while it's loading or buffering it isn't judged at all
+ * Returns a function to line up right now (call it when the video becomes ready). */
+function useSync(
+  cid: string,
+  item: WatchItem,
+  get: () => { pos: number; paused: boolean; busy?: boolean } | null,
+  set: (posMs: number | null, play: boolean, rate?: number) => void,
+) {
   const now = useWatch((s) => s.byChannel[cid]?.now);
+  const lineRef = useRef<() => void>(() => {});
+  // always the latest player: these checks outlive renders (an old copy from before the video
+  // loaded never saw it, so a movie you came back to sat on a black frame)
+  const io = useRef({ get, set });
+  io.current = { get, set };
   useEffect(() => {
+    let last = -1;
+    let stuck = 0;
+    let quietUntil = 0;
     const line = () => {
       const want = targetMs(cid);
-      const cur = get();
+      const cur = io.current.get();
       const st = useWatch.getState().byChannel[cid]?.now;
       if (want === null || !cur || !st || st.item.id !== item.id) return;
-      const off = Math.abs(cur.pos - want);
-      set(off > 1500 ? want : null, st.playing);
+      if (!st.playing) {
+        // paused: everyone on the same frame
+        io.current.set(Math.abs(cur.pos - want) > 300 ? want : null, false, 1);
+        return;
+      }
+      if (cur.busy) {
+        // loading or buffering: start it (it plays once it has enough), don't judge it
+        io.current.set(null, true, 1);
+        return;
+      }
+      stuck = !cur.paused && Math.abs(cur.pos - last) < 100 ? stuck + 1 : 0;
+      last = cur.pos;
+      const off = cur.pos - want; // ahead > 0, behind < 0
+      const t = Date.now();
+      if ((Math.abs(off) > 5000 || stuck >= 2 || cur.paused) && t >= quietUntil) {
+        io.current.set(Math.abs(off) > 1000 || stuck >= 2 ? want : null, true, 1);
+        stuck = 0;
+        quietUntil = t + 8000; // give it time to settle after a jump
+      } else if (Math.abs(off) > 400) {
+        io.current.set(null, true, off > 0 ? 0.95 : 1.05);
+      } else {
+        io.current.set(null, true, 1);
+      }
+    };
+    lineRef.current = () => {
+      quietUntil = 0;
+      line();
     };
     line();
-    const t = setInterval(line, 3000);
-    return () => clearInterval(t);
+    const iv = setInterval(line, 2000);
+    return () => clearInterval(iv);
   }, [cid, item.id, now?.playing, now?.pos_ms, now?.at_ms]);
+  return () => lineRef.current();
 }
 
 function reportEnded(cid: string, item: WatchItem) {
@@ -294,6 +456,15 @@ async function vttBlob(path: string): Promise<string> {
   return URL.createObjectURL(new Blob([await r.text()], { type: "text/vtt" }));
 }
 
+/** Can this device play HEVC (H.265) video itself? (Most 4K files are HEVC.) */
+function canHevc(): boolean {
+  try {
+    return typeof MediaSource !== "undefined" && MediaSource.isTypeSupported('video/mp4; codecs="hvc1.1.6.L153.B0"');
+  } catch {
+    return false;
+  }
+}
+
 async function resolveSource(item: WatchItem): Promise<Source> {
   if (item.kind === "url") return { src: item.src, subs: [] };
   if (item.kind === "library") {
@@ -302,8 +473,8 @@ async function resolveSource(item: WatchItem): Promise<Source> {
     const subs = m?.subs_file_id ? [{ url: await vttBlob(`/api/files/${m.subs_file_id}`).catch(() => ""), label: "Subtitles" }].filter((x) => x.url) : [];
     return { src: media(`/api/files/${item.src}`), subs };
   }
-  // Jellyfin
-  const s = await api(`/api/watch/jellyfin/${item.src}/session`, { method: "POST" });
+  // Jellyfin (telling it whether this device plays HEVC itself, so 4K isn't converted)
+  const s = await api(`/api/watch/jellyfin/${item.src}/session${canHevc() ? "?hevc=1" : ""}`, { method: "POST" });
   const hls = session.server + s.hls;
   const subs = [];
   for (const t of s.subs || []) {
@@ -363,14 +534,20 @@ function FilePlayer({ cid, item, vol }: { cid: string; item: WatchItem; vol: num
   useEffect(() => {
     if (ref.current) ref.current.volume = vol;
   }, [vol]);
-  useSync(
+  const lineUp = useSync(
     cid,
     item,
-    () => (ref.current && src ? { pos: ref.current.currentTime * 1000, paused: ref.current.paused } : null),
-    (pos, play) => {
+    () => {
+      const el = ref.current;
+      if (!el || !src || el.readyState === 0) return null;
+      // loading, seeking or out of data: not judged
+      return { pos: el.currentTime * 1000, paused: el.paused, busy: el.seeking || el.readyState < 3 };
+    },
+    (pos, play, rate = 1) => {
       const el = ref.current;
       if (!el) return;
       if (pos !== null) el.currentTime = pos / 1000;
+      if (el.playbackRate !== rate) el.playbackRate = rate;
       if (play && el.paused) el.play().catch(() => setProblem("Tap the video to start it (your browser blocked autoplay)."));
       if (!play && !el.paused) el.pause();
     },
@@ -384,7 +561,10 @@ function FilePlayer({ cid, item, vol }: { cid: string; item: WatchItem; vol: num
         onLoadedMetadata={(e) => {
           setDuration(item.id, e.currentTarget.duration * 1000);
           setProblem("");
+          // ready: go to the room's spot and play now, not at the next check
+          lineUp();
         }}
+        onCanPlay={() => lineUp()}
         onEnded={() => reportEnded(cid, item)}
         onError={() => {
           // the file as-is didn't play here: switch to Jellyfin's converted version
@@ -481,7 +661,9 @@ function YouTubePlayer({ cid, item, vol }: { cid: string; item: WatchItem; vol: 
     () => {
       const p = player.current;
       if (!p?.getCurrentTime) return null;
-      return { pos: p.getCurrentTime() * 1000, paused: p.getPlayerState() !== 1 };
+      const state = p.getPlayerState();
+      // 3: buffering (not judged)
+      return { pos: p.getCurrentTime() * 1000, paused: state !== 1 && state !== 3, busy: state === 3 };
     },
     (pos, play) => {
       const p = player.current;
@@ -665,7 +847,8 @@ function LibraryPicker({ onPick }: { onPick: (kind: "library" | "jellyfin", id: 
   const [lib, setLib] = useState<{ jellyfin: boolean; movies: any[] } | null>(null);
   const [tab, setTab] = useState<"jellyfin" | "uploaded">("jellyfin");
   const [q, setQ] = useState("");
-  const [series, setSeries] = useState<{ id: string; title: string } | null>(null);
+  // a show (its episodes) or a collection (its movies) that's open
+  const [series, setSeries] = useState<{ id: string; title: string; kind: string } | null>(null);
   const [jf, setJf] = useState<any[] | null>(null);
   useEffect(() => {
     api("/api/watch/library")
@@ -680,7 +863,7 @@ function LibraryPicker({ onPick }: { onPick: (kind: "library" | "jellyfin", id: 
     setJf(null);
     const t = setTimeout(
       () =>
-        api(`/api/watch/jellyfin/items?${series ? `series=${series.id}` : `q=${encodeURIComponent(q.trim())}`}`)
+        api(`/api/watch/jellyfin/items?${series ? `${series.kind === "collection" ? "collection" : "series"}=${series.id}` : `q=${encodeURIComponent(q.trim())}`}`)
           .then((r) => setJf(r.items))
           .catch((e) => (toast(e.message, "error"), setJf([]))),
       q ? 250 : 0,
@@ -715,10 +898,10 @@ function LibraryPicker({ onPick }: { onPick: (kind: "library" | "jellyfin", id: 
             <div className="muted small">Loading…</div>
           ) : (
             jf.map((it) => (
-              <button key={it.id} className="poster" onClick={() => (it.kind === "series" ? setSeries({ id: it.id, title: it.title }) : onPick("jellyfin", it.id))} title={it.title}>
+              <button key={it.id} className="poster" onClick={() => (it.kind === "series" || it.kind === "collection" ? setSeries({ id: it.id, title: it.title, kind: it.kind }) : onPick("jellyfin", it.id))} title={it.title}>
                 {it.has_poster ? <img src={media(`/api/watch/jellyfin/${it.id}/poster`)} alt="" loading="lazy" /> : <span className="poster-blank">🎬</span>}
                 <span className="poster-title">{it.title}</span>
-                <span className="muted small">{it.kind === "series" ? "Show ›" : it.year || ""}</span>
+                <span className="muted small">{it.kind === "series" ? "Show ›" : it.kind === "collection" ? "Collection ›" : it.year || ""}</span>
               </button>
             ))
           ))}
