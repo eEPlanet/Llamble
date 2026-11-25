@@ -4,7 +4,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { create } from "zustand";
 import { Track } from "livekit-client";
 import { api, media, session, upload } from "../api";
-import { can, selectChannel, useStore } from "../store";
+import { can, isUnread, selectChannel, useStore } from "../store";
+import { useIsPhone } from "../phone";
 import { P } from "../types";
 import type { Channel } from "../types";
 import { toast } from "../ui";
@@ -148,6 +149,7 @@ export function WatchView({ channel }: { channel: Channel }) {
         <div className="watch-tabs">
           <button className={"watch-tab" + (side === "chat" ? " on" : "")} onClick={() => setSide("chat")}>
             💬 Chat
+            {side !== "chat" && <ChatMarks channel={channel} />}
           </button>
           <button className={"watch-tab" + (side === "queue" ? " on" : "")} onClick={() => setSide("queue")}>
             🎬 Queue{st?.queue?.length ? ` (${st.queue.length})` : ""}
@@ -173,6 +175,18 @@ function Player({ cid, st, full, onFull, fullChat, onFullChat }: { cid: string; 
   const users = useStore((s) => s.users);
   const [vol, setVol] = useState(() => Number(localStorage.getItem("llamble.watchVol") ?? "1"));
   useEffect(() => localStorage.setItem("llamble.watchVol", String(vol)), [vol]);
+  // phones: one row of controls; volume and mute choices sit behind "⋯"
+  const phone = useIsPhone();
+  const [more, setMore] = useState(false);
+  const extras = (
+    <>
+      <label className="watch-vol" title="Volume (just for you)">
+        🔊
+        <input type="range" min={0} max={1} step={0.05} value={vol} onChange={(e) => setVol(Number(e.target.value))} />
+      </label>
+      <MuteChoices />
+    </>
+  );
 
   const act = (action: string, extra: any = {}) => watchAction(cid, "/control", { action, ...extra }).catch((e) => toast(e.message, "error"));
 
@@ -219,20 +233,23 @@ function Player({ cid, st, full, onFull, fullChat, onFullChat }: { cid: string; 
               {now!.voted ? `Voted to skip (${now!.skip_votes}/${Math.floor(st.in_room / 2) + 1})` : `Vote to skip${now!.skip_votes ? ` (${now!.skip_votes}/${Math.floor(st.in_room / 2) + 1})` : ""}`}
             </button>
           )}
-          <label className="watch-vol" title="Volume (just for you)">
-            🔊
-            <input type="range" min={0} max={1} step={0.05} value={vol} onChange={(e) => setVol(Number(e.target.value))} />
-          </label>
-          <MuteChoices />
+          {phone && !full ? (
+            <button className={"btn small" + (more ? " primary" : "")} title="More: volume and mute" onClick={() => setMore(!more)}>
+              ⋯
+            </button>
+          ) : (
+            extras
+          )}
           {full && (
             <button className={"btn small" + (fullChat ? " primary" : "")} onClick={onFullChat}>
               💬 Chat
             </button>
           )}
           <button className="btn small" onClick={() => onFull(!full)} title={full ? "Leave full screen (Esc)" : "Full screen"}>
-            {full ? "↙ Exit full screen" : "⛶ Full screen"}
+            {phone ? (full ? "↙" : "⛶") : full ? "↙ Exit full screen" : "⛶ Full screen"}
           </button>
         </div>
+        {phone && !full && more && <div className="watch-controls watch-more">{extras}</div>}
         <TalkRequests cid={cid} st={st} mayRun={mayRun} />
       </div>
     </div>
@@ -1203,4 +1220,11 @@ export function InvisibleGate({ channel }: { channel: Channel }) {
       </div>
     </div>
   );
+}
+
+/** On the Chat tab while it's not showing: a dot for new chat, a red number for mentions. */
+function ChatMarks({ channel }: { channel: Channel }) {
+  const unread = useStore((s) => isUnread(channel, s));
+  const mentions = useStore((s) => s.mentions[channel.id] || 0);
+  return mentions > 0 ? <span className="badge inline">{mentions}</span> : unread ? <span className="new-dot" title="New messages" /> : null;
 }

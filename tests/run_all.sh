@@ -45,6 +45,7 @@ run activity -- activity_test.py http://127.0.0.1:8099
 run share -- share_test.py http://127.0.0.1:8099
 run pushes -- pushes_test.py http://127.0.0.1:8099
 run calls LLAMBLE_LIVEKIT_BIN=$T/fake_livekit.py FAKE_LK_OUT=/tmp/fake_lk5.yaml -- calls_test.py http://127.0.0.1:8099
+run voice_chat LLAMBLE_LIVEKIT_BIN=$T/fake_livekit.py FAKE_LK_OUT=/tmp/fake_lk6.yaml -- voice_chat_test.py http://127.0.0.1:8099
 run stay_in_call "${LK[@]}" LIVEKIT_INTERNAL_URL=http://127.0.0.1:8093 -- stay_in_call_test.py http://127.0.0.1:8099
 run voicemsg -- voicemsg_test.py http://127.0.0.1:8099
 run social -- social_test.py http://127.0.0.1:8099
@@ -55,6 +56,7 @@ run status -- status_test.py http://127.0.0.1:8099
 run watch "${LK[@]}" -- watch_test.py http://127.0.0.1:8099
 run jellyfin -- jellyfin_test.py http://127.0.0.1:8099
 run home -- home_test.py http://127.0.0.1:8099
+run mentions -- mentions_test.py http://127.0.0.1:8099
 run alarms -- alarms_test.py http://127.0.0.1:8099
 NEWS_KEY=$(python3 -c "import base64;from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey as K;from cryptography.hazmat.primitives import serialization as s;print(base64.b64encode(K.from_private_bytes(bytes(range(32))).public_key().public_bytes(s.Encoding.Raw,s.PublicFormat.Raw)).decode())")
 run news LLAMBLE_NEWS_TEST_KEY=$NEWS_KEY -- news_test.py http://127.0.0.1:8099

@@ -237,7 +237,28 @@ impl AppState {
     }
     pub async fn emit_channel(&self, ch: &Channel, t: &str, d: &impl Serialize) {
         let ids = channel_audience(&self.db, ch).await;
+        // A voice & video space's chat is only for the people in the space (in its call, or
+        // with it open after hanging up). Everyone else just hears that there's something new
+        // (and whether it mentions them), for the unread dot and the red number.
+        if ch.kind == "voice" && is_chat_event(t) {
+            let (inside, outside): (Vec<String>, Vec<String>) = ids.into_iter().partition(|u| self.in_space(u, &ch.id));
+            self.hub.send_users(&inside, t, d);
+            if t == "MESSAGE_CREATE" {
+                let v = serde_json::to_value(d).unwrap_or(Value::Null);
+                let content = v["content"].as_str().unwrap_or_default();
+                let everyone = content.contains("@everyone") || content.contains("@here");
+                for u in outside {
+                    let mentions = everyone || content.contains(&format!("<@{u}>"));
+                    self.hub.send_user(&u, "SPACE_ACTIVITY", &json!({ "channel_id": ch.id, "guild_id": ch.guild_id, "message_id": v["id"], "author_id": v["author"]["id"], "mentions_me": mentions }));
+                }
+            }
+            return;
+        }
         self.hub.send_users(&ids, t, d);
+    }
+    /// In this space now: in its call, or with it open (a chat you stayed in after hanging up).
+    pub fn in_space(&self, uid: &str, cid: &str) -> bool {
+        self.hub.voice.iter().any(|v| v.user_id == uid && v.channel_id == cid) || crate::gateway::has_open(uid, cid)
     }
     /// Everyone who shares a guild or DM with this user (for presence/profile updates).
     pub async fn related_users(&self, user_id: &str) -> Vec<String> {
@@ -307,4 +328,9 @@ impl FromRequestParts<Shared> for AuthUser {
         let token = token_from_parts(parts).ok_or_else(AppError::unauthorized)?;
         auth_token(state, &token).await
     }
+}
+
+/// Events that carry what's said in a chat.
+fn is_chat_event(t: &str) -> bool {
+    t.starts_with("MESSAGE_") || t.starts_with("REACTION_") || t.starts_with("TYPING_") || t == "CHANNEL_CLEARED"
 }

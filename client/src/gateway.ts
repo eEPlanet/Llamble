@@ -64,6 +64,15 @@ export function sendGateway(op: string, data: Record<string, unknown> = {}) {
 
 function open() {
   clearTimeout(retryTimer);
+  // only ever one connection: a second one (opened while the first was still connecting)
+  // delivered every event twice
+  const prev = ws;
+  if (prev) {
+    ws = null;
+    try {
+      prev.close();
+    } catch {}
+  }
   const url = session.server.replace(/^http/, "ws") + "/api/gateway?access_token=" + encodeURIComponent(session.token) + (quiet ? "&quiet=1" : "");
   useStore.setState({ conn: "connecting" });
   const sock = new WebSocket(url);
@@ -84,6 +93,7 @@ function open() {
     window.dispatchEvent(new Event("llamble:gateway-open"));
   };
   sock.onmessage = (e) => {
+    if (ws !== sock) return; // an old connection on its way out
     lastHeard = Date.now();
     try {
       const { t, d } = JSON.parse(e.data);

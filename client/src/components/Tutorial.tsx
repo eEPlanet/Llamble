@@ -99,7 +99,10 @@ export function TutorialGuide() {
   const vh = window.innerHeight;
   let style: React.CSSProperties;
   if (phone) {
-    style = rect && rect.top > vh * 0.55 ? { left: 8, right: 8, top: 8 } : { left: 8, right: 8, bottom: 8 };
+    // at the bottom unless what it points at is down there (or a chat's message box is showing,
+    // which the card must never cover)
+    const typing = !rect && [...document.querySelectorAll(".composer")].some((c) => c.getBoundingClientRect().height > 0);
+    style = (rect && rect.top > vh * 0.55) || typing ? { left: 8, right: 8, top: 8 } : { left: 8, right: 8, bottom: 8 };
   } else if (rect) {
     const below = rect.bottom + pad + cardSize.h < vh;
     const above = rect.top - pad - cardSize.h > 0;

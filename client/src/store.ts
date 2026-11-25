@@ -561,6 +561,17 @@ export function handleEvent(t: string, d: any) {
       set({ presences: { ...s.presences, [d.user_id]: d.status }, games, activityHidden: { ...s.activityHidden, [d.user_id]: !!d.hidden } });
       break;
     }
+    case "SPACE_ACTIVITY": {
+      // something new in a voice space's chat you're not in (you only hear that it's there)
+      const ch = s.channels[d.channel_id];
+      if (!ch) break;
+      const patch: Partial<State> = {
+        channels: { ...s.channels, [ch.id]: { ...ch, last_message_id: !ch.last_message_id || d.message_id > ch.last_message_id ? d.message_id : ch.last_message_id, last_alert_id: !ch.last_alert_id || d.message_id > ch.last_alert_id ? d.message_id : ch.last_alert_id } },
+      };
+      if (d.mentions_me && d.author_id !== s.me?.id) patch.mentions = { ...s.mentions, [ch.id]: (s.mentions[ch.id] || 0) + 1 };
+      set(patch);
+      break;
+    }
     case "VIEWERS_UPDATE": {
       set({ viewers: { ...s.viewers, [d.channel_id]: d.user_ids } });
       break;

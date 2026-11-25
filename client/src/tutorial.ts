@@ -810,7 +810,9 @@ function steps(ctx: TourCtx, w: World): Step[] {
     id: "dm",
     title: "Direct messages",
     text: "Open your chat with Maya and send her something.",
-    target: () => document.querySelector(`[data-cid="${w.mayaDm}"]`) || document.querySelector(".composer"),
+    // her row in the list, then (once her chat is open) the message box. On a phone the list
+    // is hidden once the chat opens, so pointing at her row left the card over the message box.
+    target: () => (currentChannelId() === w.mayaDm ? document.querySelector(".composer") : document.querySelector(`[data-cid="${w.mayaDm}"]`)),
     nav: !(currentChannelId() === w.mayaDm),
     done: () => mine(w.mayaDm),
   });

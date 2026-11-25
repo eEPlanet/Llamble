@@ -110,6 +110,9 @@ function ChannelList({ guildId }: { guildId: string }) {
   const groups = list.filter((c) => c.kind === "category").sort((a, b) => a.position - b.position);
   const loose = list.filter((c) => c.kind !== "category" && (!c.parent_id || !channels[c.parent_id]));
   const collapsed = useUI((s) => s.collapsed);
+  // collapsed groups show what's new inside them: keep them current
+  useStore((s) => s.readStates);
+  useStore((s) => s.mentions);
   const manage = can(guildId, P.MANAGE_CHANNELS);
   const [over, setOver] = useState<string | null>(null);
   const voiceIn = useVoice((v) => v.channelId);
@@ -144,6 +147,7 @@ function ChannelList({ guildId }: { guildId: string }) {
     const isCollapsed = !pinned && collapsed[key];
     // collapsed hides everything under it; the heading shows a dot if something's new in there
     const newInside = isCollapsed && kids.some((c) => isUnread(c));
+    const mentionsInside = isCollapsed ? kids.reduce((n, c) => n + (useStore.getState().mentions[c.id] || 0), 0) : 0;
     return (
       <div key={key} className={"category" + (over === key ? " drop-over" : "")} {...dropProps(key, group?.id ?? null)}>
         <div
@@ -175,7 +179,7 @@ function ChannelList({ guildId }: { guildId: string }) {
         >
           {pinned ? <span className="cat-arrow-space" /> : <Icon name="chevron" size={12} className={isCollapsed ? "rot" : ""} />}
           <span>{label}</span>
-          {newInside && <span className="cat-new" title="Something new in here" />}
+          {mentionsInside > 0 ? <span className="badge inline" title="Mentions of you in here">{mentionsInside}</span> : newInside && <span className="new-dot" title="Something new in here" />}
           {manage && group && (
             <button
               className="icon-btn tiny"
@@ -296,7 +300,8 @@ function BoardRows({ guildId }: { guildId: string }) {
 
 function ChannelRow({ ch }: { ch: Channel }) {
   const active = useStore((s) => currentChannelId(s) === ch.id);
-  const unread = useStore((s) => ch.kind === "text" && isUnread(ch, s));
+  // chat you haven't seen: chat spaces, and the chats of voice and Watch spaces
+  const unread = useStore((s) => ["text", "voice", "watch"].includes(ch.kind) && isUnread(ch, s));
   const mentions = useStore((s) => s.mentions[ch.id] || 0);
   const manage = can(ch.guild_id, P.MANAGE_CHANNELS);
   const voiceStates = useStore((s) => s.voiceStates);
@@ -304,13 +309,17 @@ function ChannelRow({ ch }: { ch: Channel }) {
   const inThis = useVoice((v) => v.channelId === ch.id);
   const friends = useStore((s) => s.friends);
   const me = useStore((s) => s.me?.id);
-  const readers = useStore((s) => (ch.kind === "text" ? s.viewers[ch.id] : undefined));
-  // who's here: in a room, everyone on the call; in a chat, everyone reading it
-  const allHere = room ? Object.values(voiceStates).filter((v) => v.channel_id === ch.id) : (readers || []).map((u) => ({ user_id: u }) as any);
+  const readers = useStore((s) => s.viewers[ch.id]);
+  // who's here: in a room, everyone on the call (plus anyone still there chatting after
+  // hanging up); in a chat, everyone reading it
+  const onCall = room ? Object.values(voiceStates).filter((v) => v.channel_id === ch.id) : [];
+  const allHere = room
+    ? [...onCall, ...(readers || []).filter((u) => !onCall.some((v) => v.user_id === u)).map((u) => ({ user_id: u }) as any)]
+    : (readers || []).map((u) => ({ user_id: u }) as any);
   const isFriend = (u: string) => friends[u]?.state === "friend";
   // in it yourself (the chat is open / you joined the room): everyone, friends first.
   // Otherwise: your friends by name, and a count for everyone else.
-  const inside = room ? inThis : active;
+  const inside = room ? inThis || active : active;
   const sorted = [...allHere].sort((a, b) => Number(isFriend(b.user_id)) - Number(isFriend(a.user_id)));
   const voiceUsers = inside ? sorted : sorted.filter((v) => isFriend(v.user_id) || v.user_id === me);
   const others = allHere.length - voiceUsers.length;
@@ -324,7 +333,7 @@ function ChannelRow({ ch }: { ch: Channel }) {
   };
   const menu = (e: React.MouseEvent) =>
     openMenu(e, [
-      { label: "Mark As Read", onClick: () => ch.last_message_id && api(`/api/channels/${ch.id}/ack`, { body: { message_id: ch.last_message_id } }), disabled: ch.kind !== "text" },
+      { label: "Mark As Read", onClick: () => ch.last_message_id && api(`/api/channels/${ch.id}/ack`, { body: { message_id: ch.last_message_id } }), disabled: !["text", "voice", "watch"].includes(ch.kind) },
       { label: "Edit Space", onClick: () => openModal({ kind: "editChannel", channelId: ch.id }), disabled: !manage },
       ...(manage ? [{ label: "Move to…", onClick: () => setTimeout(() => moveToMenu(e, ch), 0) }] : []),
       {
@@ -362,9 +371,9 @@ function ChannelRow({ ch }: { ch: Channel }) {
         onDragEnd={() => (dragging = null)}
         title={ch.kind === "text" ? "Chat space" : ch.kind === "voice" ? "Voice & Video space" : ch.kind === "watch" ? "Watch Party space" : undefined}
       >
-        {unread && !active && <span className="unread-pip" />}
         <span className="channel-icon channel-emoji-icon">{spaceEmoji(ch.kind)}</span>
         <span className="ellipsis">{ch.name}</span>
+        {unread && !active && !mentions && <span className="new-dot" title="New messages" />}
         {ch.locked && <span title="Locked: only staff can go in">🔒</span>}
         {ch.kind === "voice" && <RecBadge channelId={ch.id} />}
         {mentions > 0 && <span className="badge inline">{mentions}</span>}

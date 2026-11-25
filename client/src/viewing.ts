@@ -12,7 +12,8 @@ function wanted(): string | null {
   const s = useStore.getState();
   const cid = currentChannelId(s);
   const ch = cid ? s.channels[cid] : undefined;
-  return ch && ch.kind === "text" && ch.guild_id ? ch.id : null;
+  // chat spaces, and rooms (voice, Watch): being in a room's space counts even after hanging up
+  return ch && ["text", "voice", "watch"].includes(ch.kind) && ch.guild_id ? ch.id : null;
 }
 
 function update() {

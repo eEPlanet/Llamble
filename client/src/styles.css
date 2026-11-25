@@ -148,9 +148,13 @@ h2 { font-size: 20px; }
 .guildbar { width: 72px; background: var(--bg-0); display: flex; flex-direction: column; align-items: center; padding: 8px 0; gap: 8px; overflow-y: auto; flex-shrink: 0; }
 .guild-wrap { position: relative; width: 72px; display: flex; justify-content: center; }
 .guild-pill { position: absolute; left: 0; top: 50%; width: 4px; height: 0; background: #fff; border-radius: 0 4px 4px 0; transform: translateY(-50%); transition: height 0.15s; }
-.guild-pill.unread { height: 8px; }
-.guild-pill.active { height: 40px; }
-.guild-wrap:hover .guild-pill:not(.active) { height: 20px; }
+/* the side line = live people: short where others are, long and thicker where you are;
+   green = voice (a live connection to step into), white = chatting only */
+.guild-pill.live { height: 10px; }
+.guild-pill.active { height: 40px; width: 5px; }
+.guild-pill.voice { background: var(--green); }
+.guild-pill.others { left: 8px; width: 4px; height: 12px; border-radius: 2px; }
+.guild-wrap:hover .guild-pill.live { height: 20px; }
 .guild-btn { position: relative; width: 48px; height: 48px; border-radius: 50%; background: var(--bg-2); color: var(--text); display: flex; align-items: center; justify-content: center; transition: border-radius 0.15s, background 0.15s; font-weight: 600; font-size: 15px; }
 .guild-btn:hover, .guild-btn.active { border-radius: 16px; background: var(--brand); color: var(--on-brand); }
 .guild-btn.has-img:hover, .guild-btn.has-img.active { background: var(--bg-2); }
@@ -1741,4 +1745,39 @@ body.pop-body > .pop { height: 100vh; }
 .watch-split.full .watch-bar .btn.green, .watch-split.full .watch-bar .btn.primary { background: #1f8b4c; }
 
 /* something new on a server's board */
-.board-dot { position: absolute; top: 2px; left: 2px; width: 10px; height: 10px; border-radius: 50%; background: var(--accent, #4f8cff); border: 2px solid var(--bg-0, #0f1626); pointer-events: none; }
+.icon-new-dot { position: absolute; bottom: 0; right: 0; width: 12px; height: 12px; border-radius: 50%; background: #fff; border: 3px solid var(--bg-0, #0f1626); box-sizing: content-box; pointer-events: none; }
+
+/* a voice & video space with its chat beside it (closed until opened) */
+.room-split { flex: 1; display: flex; min-height: 0; min-width: 0; }
+.room-split > .voice-view { flex: 1; min-width: 0; }
+.room-chat { width: 360px; flex: none; display: flex; flex-direction: column; border-left: 1px solid var(--border, #3f4147); background: var(--bg-2); min-height: 0; }
+.room-chat .chat { flex: 1; min-height: 0; }
+.room-chat-btn { position: relative; display: inline-flex; align-items: center; gap: 6px; }
+.room-chat-btn .badge.inline, .room-chat-btn .new-dot { margin-left: 2px; }
+.room-idle-chat { position: absolute; top: 12px; right: 12px; }
+.flex-spacer { flex: 1; }
+/* one "something new" dot everywhere */
+.new-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #fff; flex: none; }
+@media (max-width: 760px) {
+  /* phones: the room on top, the chat filling the rest below */
+  .room-split.chat-open { flex-direction: column; }
+  .room-split.chat-open > .voice-view { flex: 0 0 42%; }
+  .room-chat { width: auto; flex: 1; border-left: 0; border-top: 1px solid var(--border, #3f4147); }
+}
+@media (max-width: 760px) {
+  /* Watch on phones: the video and its controls stay put at the top; Chat and Queue fill the rest */
+  .watch-split:not(.full) .watch-main { flex: none; overflow: hidden; }
+  .watch-split:not(.full) .watch-main > .chat-header { height: 40px; }
+  .watch-split:not(.full) .watch-stage { padding: 0; }
+  .watch-split:not(.full) .watch-screen { border-radius: 0; max-height: 34vh; }
+  .watch-split:not(.full) .watch-bar { padding: 6px 8px; gap: 4px; }
+  .watch-split:not(.full) .watch-now .muted { display: none; }
+  .watch-split:not(.full) .watch-controls { flex-wrap: nowrap; overflow-x: auto; gap: 6px; }
+  .watch-split:not(.full) .watch-controls .btn { flex: none; }
+  .watch-split:not(.full) .watch-more { flex-wrap: wrap; }
+  .watch-split:not(.full) .watch-more .watch-vol { margin-left: 0; }
+  .watch-split:not(.full) .watch-call { padding: 4px 8px; gap: 10px; }
+  .watch-split:not(.full) .watch-call .call-btn { width: 40px; height: 40px; }
+  .watch-split:not(.full) .watch-chat { flex: 1; height: auto; min-height: 0; }
+}
+.watch-tab { display: inline-flex; align-items: center; gap: 6px; }

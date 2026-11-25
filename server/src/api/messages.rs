@@ -21,6 +21,8 @@ pub async fn list_messages(State(state): State<Shared>, auth: AuthUser, Path(cid
         if !crate::kids::guardian_can_read(&state, &ch, &auth.id).await {
             return Err(e); // (a locked space says so)
         }
+    } else {
+        space_chat_open(&state, &ch, &auth.id)?;
     }
     let limit = q.limit.unwrap_or(50).clamp(1, 100);
     let rows = if let Some(after) = q.after {
@@ -106,6 +108,7 @@ pub async fn create_message(State(state): State<Shared>, auth: AuthUser, Path(ci
         need |= perms::ATTACH;
     }
     let p = require_channel(&state.db, &ch, &auth.id, need).await?;
+    space_chat_open(&state, &ch, &auth.id)?;
     crate::kids::check_quiet(&state, &auth.id).await?;
     if ch.guild_id.is_none() {
         let others: Vec<String> = sqlx::query_scalar("SELECT user_id FROM dm_members WHERE channel_id = ? AND user_id != ?").bind(&ch.id).bind(&auth.id).fetch_all(&state.db).await?;
@@ -202,6 +205,14 @@ pub async fn create_message(State(state): State<Shared>, auth: AuthUser, Path(ci
         crate::api::social::kept_by_message(&state, &ch.id).await;
     }
     crate::pushes::message_created(&state, &ch, &payload, &auth.id).await;
+    {
+        // @mentions of people and replies to them land in their Notifications too
+        let reply_author: Option<String> = match &reply_to {
+            Some(r) => sqlx::query_scalar("SELECT author_id FROM messages WHERE id = ?").bind(r).fetch_optional(&state.db).await.ok().flatten(),
+            None => None,
+        };
+        crate::api::notifications::message_mentions(&state, &ch, &payload, &auth.id, reply_author.as_deref()).await;
+    }
     if let Some(v) = &req.voice {
         if v.urgent {
             crate::pushes::urgent(&state, &ch, &payload, &auth.id).await;
@@ -304,6 +315,7 @@ pub async fn delete_message(State(state): State<Shared>, auth: AuthUser, Path(mi
     }
     kid_may_delete(&state, &auth).await?;
     crate::api::highlights::forget(&state, "message_id", &mid).await;
+    crate::api::notifications::forget_message(&state, &mid).await;
     sqlx::query("DELETE FROM messages WHERE id = ?").bind(&mid).execute(&state.db).await?;
     state.emit_channel(&ch, "MESSAGE_DELETE", &json!({ "id": mid, "channel_id": ch.id })).await;
     Ok(Json(json!({ "ok": true })))
@@ -313,6 +325,7 @@ pub async fn delete_message(State(state): State<Shared>, auth: AuthUser, Path(mi
 pub async fn remove_message(state: &Shared, mid: &str) {
     let Ok((_, ch)) = get_msg_and_channel(state, mid).await else { return };
     crate::api::highlights::forget(state, "message_id", mid).await;
+    crate::api::notifications::forget_message(state, mid).await;
     let _ = sqlx::query("DELETE FROM messages WHERE id = ?").bind(mid).execute(&state.db).await;
     state.emit_channel(&ch, "MESSAGE_DELETE", &json!({ "id": mid, "channel_id": ch.id })).await;
 }
@@ -370,6 +383,7 @@ pub async fn ack(State(state): State<Shared>, auth: AuthUser, Path(cid): Path<St
     )
     .bind(&auth.id).bind(&cid).bind(&req.message_id).execute(&state.db).await?;
     state.hub.send_user(&auth.id, "READ_STATE_UPDATE", &json!({ "channel_id": cid, "last_read_id": req.message_id }));
+    crate::api::notifications::read_mentions_upto(&state, &auth.id, &cid, &req.message_id).await;
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -379,10 +393,20 @@ pub struct SearchQ {
     pub limit: Option<i64>,
 }
 
+/// A voice & video space's chat is only for the people in the space: in its call, or with it
+/// open (you can hang up and keep chatting).
+fn space_chat_open(state: &Shared, ch: &crate::models::Channel, uid: &str) -> ApiResult<()> {
+    if ch.kind == "voice" && !state.in_space(uid, &ch.id) {
+        return Err(AppError::forbidden_msg("join this space to see its chat"));
+    }
+    Ok(())
+}
+
 /// Simple per-channel substring search.
 pub async fn search(State(state): State<Shared>, auth: AuthUser, Path(cid): Path<String>, Query(q): Query<SearchQ>) -> ApiResult<Json<Vec<Message>>> {
     let ch = load_channel(&state.db, &cid).await?;
     require_channel(&state.db, &ch, &auth.id, perms::VIEW).await?;
+    space_chat_open(&state, &ch, &auth.id)?;
     let term = q.q.trim();
     if term.len() < 2 {
         return Ok(Json(vec![]));
@@ -420,6 +444,7 @@ pub async fn open_dm(State(state): State<Shared>, auth: AuthUser, Json(req): Jso
     }
     let existing: Option<String> = sqlx::query_scalar(
         "SELECT a.channel_id FROM dm_members a JOIN dm_members b ON a.channel_id = b.channel_id
+         JOIN channels ch ON ch.id = a.channel_id AND ch.kind = 'dm'
          WHERE a.user_id = ? AND b.user_id = ?
          AND (SELECT COUNT(*) FROM dm_members c WHERE c.channel_id = a.channel_id) = 2 LIMIT 1",
     ).bind(&auth.id).bind(&req.recipient_id).fetch_optional(&state.db).await?;

@@ -229,7 +229,17 @@ function MessageList({ channel }: { channel: Channel }) {
   );
 
   useEffect(() => {
-    if (!loaded) load().catch(() => {});
+    if (loaded) return;
+    // a voice space's chat opens as soon as the server knows you're in the space: try again
+    // for a moment if it doesn't yet
+    let tries = 0;
+    let t: ReturnType<typeof setTimeout>;
+    const go = () =>
+      load().catch((e: any) => {
+        if (channel.kind === "voice" && e?.status === 403 && tries++ < 5) t = setTimeout(go, 500);
+      });
+    go();
+    return () => clearTimeout(t);
   }, [loaded, load]);
 
   // acknowledge (mark read) while viewing
@@ -277,16 +287,39 @@ function MessageList({ channel }: { channel: Channel }) {
     return () => ro.disconnect();
   }, []);
 
+  // going to one message (a reply, a search hit, a mention): if it's further back than what's
+  // loaded, load older pages until it shows up (a few at most)
+  const jumpTries = useRef(0);
+  const [jumpTick, setJumpTick] = useState(0);
   useEffect(() => {
     if (!jumpTo) return;
     const node = document.getElementById("msg-" + jumpTo);
     if (node) {
+      jumpTries.current = 0;
+      atBottom.current = false;
       node.scrollIntoView({ block: "center" });
       node.classList.add("flash");
       setTimeout(() => node.classList.remove("flash"), 1500);
+      useUI.setState({ jumpTo: null });
+      return;
     }
+    if (!loaded) return; // still loading the chat: try again when it's in
+    const oldest = msgs.find((m) => !m.pending);
+    if (loadingOlder.current) return; // a page is on its way: this runs again when it's in
+    if (hasMore && oldest && jumpTries.current < 20) {
+      jumpTries.current++;
+      loadingOlder.current = true;
+      load(oldest.id)
+        .catch(() => {})
+        .finally(() => {
+          loadingOlder.current = false;
+          setJumpTick((n) => n + 1); // look again now the page is in
+        });
+      return;
+    }
+    jumpTries.current = 0;
     useUI.setState({ jumpTo: null });
-  }, [jumpTo]);
+  }, [jumpTo, msgs, loaded, hasMore, jumpTick]);
 
   const onScroll = () => {
     const el = scroller.current!;

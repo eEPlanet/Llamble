@@ -228,16 +228,52 @@ function GuildBar() {
     for (const ch of Object.values(s.channels)) {
       const key = homeOf(ch);
       const o = (out[key] ||= { unread: false, mentions: 0 });
-      if (ch.kind !== "voice" && ch.kind !== "category" && isUnread(ch, s)) o.unread = true;
+      if (ch.kind !== "category" && isUnread(ch, s)) o.unread = true;
       o.mentions += s.mentions[ch.id] || 0;
     }
     return JSON.stringify(out);
   });
   const unread = JSON.parse(unreadByGuild) as Record<string, { unread: boolean; mentions: number }>;
+  // live people (the side line): who's in voice, and who's in a chat, per server (and Talk)
+  const liveKey = useStore((s) => {
+    const me = s.me?.id;
+    const out: Record<string, { voice: boolean; chat: boolean }> = {};
+    for (const v of Object.values(s.voiceStates)) {
+      if (v.user_id === me) continue;
+      const ch = s.channels[v.channel_id];
+      if (!ch) continue;
+      const key = ch.guild_id ?? "@talk";
+      (out[key] ||= { voice: false, chat: false }).voice = true;
+    }
+    for (const [cid, users] of Object.entries(s.viewers)) {
+      const g = s.channels[cid]?.guild_id;
+      if (g && users.some((u) => u !== me)) (out[g] ||= { voice: false, chat: false }).chat = true;
+    }
+    return JSON.stringify(out);
+  });
+  const live = JSON.parse(liveKey) as Record<string, { voice: boolean; chat: boolean }>;
+  /** The side line: short where others are live, long (and thicker) where you are; green
+   *  means voice (a live connection to step into), white means chatting only. */
+  const Lines = ({ k, here, myVoice }: { k: string; here: boolean; myVoice: boolean }) => {
+    const l = live[k];
+    return (
+      <>
+        {/* yours: long, against the edge; its color is your own connection */}
+        <span className={"guild-pill" + (here ? " active" + (myVoice ? " voice" : "") : l ? " live" + (l.voice ? " voice" : "") : "")} />
+        {/* others there while you are too: a short line just beside yours */}
+        {here && l && <span className={"guild-pill others live" + (l.voice ? " voice" : "")} title={l.voice ? "Others are in voice here" : "Others are chatting here"} />}
+      </>
+    );
+  };
   // conversations with anything unread (not just mentions), so new DMs are noticeable
   const unreadDms = useStore((s) => Object.values(s.channels).filter((c) => c.kind === "dm" && isUnread(c, s)).length);
   const unreadParties = useStore((s) => Object.values(s.channels).filter((c) => c.kind === "party" && isUnread(c, s)).length);
   const requests = useStore((s) => Object.values(s.friends).filter((f) => f.state === "incoming").length);
+  const voiceTalk = useStore((s) => {
+    const cid = useVoice.getState().channelId;
+    const ch = cid ? s.channels[cid] : undefined;
+    return !!ch && !ch.guild_id;
+  });
   const voiceGuild = useStore((s) => {
     const cid = useVoice.getState().channelId;
     return cid ? s.channels[cid]?.guild_id : null;
@@ -270,7 +306,7 @@ function GuildBar() {
       </div>
       <div className="guild-sep" />
       <div className="guild-wrap">
-        <span className={"guild-pill" + (inMessages ? " active" : msgCount ? " unread" : "")} />
+        <Lines k="@talk" here={inMessages} myVoice={!!voiceTalk} />
         <button
           className={"guild-btn dms" + (inMessages ? " active" : "") + (msgCount ? " has-unread" : "")}
           data-tut="talk"
@@ -282,7 +318,7 @@ function GuildBar() {
         </button>
       </div>
       <div className="guild-wrap">
-        <span className={"guild-pill" + (selected === "@friends" ? " active" : requests ? " unread" : "")} />
+        <span className={"guild-pill" + (selected === "@friends" ? " active" : "")} />
         <button
           className={"guild-btn dms" + (selected === "@friends" ? " active" : "")}
           data-tut="friends"
@@ -300,7 +336,7 @@ function GuildBar() {
         const u = unread[id];
         return (
           <div key={id} className="guild-wrap">
-            <span className={"guild-pill" + (selected === id ? " active" : u?.unread ? " unread" : "")} />
+            <Lines k={id} here={selected === id || voiceGuild === id} myVoice={voiceGuild === id} />
             <button
               className={"guild-btn" + (selected === id ? " active" : "") + (g.icon_file_id ? " has-img" : "")}
               data-gid={id}
@@ -322,9 +358,7 @@ function GuildBar() {
               }
             >
               <GuildIcon name={g.name} iconId={g.icon_file_id} />
-              {voiceGuild === id && <span className="voice-dot" title="You're in voice here"><Icon name="speaker" size={10} stroke={3} /></span>}
-              {u?.mentions ? <span className="badge">{u.mentions}</span> : null}
-              <BoardDot gid={id} />
+              {u?.mentions ? <span className="badge">{u.mentions}</span> : <NewDot gid={id} unread={!!u?.unread} />}
             </button>
           </div>
         );
@@ -488,14 +522,14 @@ function VersionNotice() {
   return null;
 }
 
-/** A small dot on a server's icon: something new on its board. */
-function BoardDot({ gid }: { gid: string }) {
-  const on = useBoardHasNew(gid);
-  return on ? <span className="board-dot" title="New on the board" /> : null;
+/** The "something new" dot on a server's icon: unread chat anywhere in it, or new on its board. */
+function NewDot({ gid, unread }: { gid: string; unread: boolean }) {
+  const board = useBoardHasNew(gid);
+  return unread || board ? <span className="icon-new-dot" title={board && !unread ? "New on the board" : "Something new"} /> : null;
 }
 
 /** Something new on any server's board: Home gathers it all, so Home shows it too. */
 function HomeBoardDot() {
   const on = useAnyBoardNew();
-  return on ? <span className="board-dot" title="New on your servers' boards" /> : null;
+  return on ? <span className="icon-new-dot" title="New on your servers' boards" /> : null;
 }

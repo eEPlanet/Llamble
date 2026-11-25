@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import { clearNotice, markRead, openCardChat, useNotices, type Notice } from "../notifications";
 import { openFriend, openHome, selectChannel, useStore } from "../store";
-import { openModal, toast } from "../ui";
+import { openModal, toast, useUI } from "../ui";
 import { Avatar, GuildIcon } from "./common";
 
 function ago(t: number): string {
@@ -19,6 +19,13 @@ function ago(t: number): string {
 }
 
 const nameOf = (u: any) => u?.display_name || u?.username || "Someone";
+
+/** Open a chat at one message (the chat loads further back until it finds it). */
+export function openMessage(home: string | undefined, channelId: string, messageId: string) {
+  if (!home || !channelId) return;
+  selectChannel(home, channelId);
+  setTimeout(() => useUI.setState({ jumpTo: messageId }), 300);
+}
 
 /** What a notification says, and what tapping it does. */
 function describe(n: Notice): { text: string; who?: any; guild?: any; open?: () => void } {
@@ -53,6 +60,14 @@ function describe(n: Notice): { text: string; who?: any; guild?: any; open?: () 
       return { text: `${nameOf(d.by)} added you to the party ${d.party?.name || ""}`.trim(), who: d.by, open: () => d.party?.id && selectChannel("@parties", d.party.id) };
     case "party_removed":
       return { text: `${nameOf(d.by)} removed you from the party ${d.party?.name || ""}`.trim(), who: d.by };
+    case "mention": {
+      const where = d.kind === "party" ? `the party ${d.channel_name || ""}`.trim() : `#${d.channel_name || "chat"}${d.guild?.name ? ` in ${d.guild.name}` : ""}`;
+      return {
+        text: `${nameOf(d.from)} ${d.reply ? "replied to you" : "mentioned you"} in ${where}${d.preview ? `: “${d.preview}”` : ""}`,
+        who: d.from,
+        open: () => openMessage(d.kind === "party" ? "@parties" : d.guild?.id, d.channel_id, d.message_id),
+      };
+    }
     case "server_removed":
       return { text: `You were ${d.banned ? "banned from" : "removed from"} ${d.guild?.name || "a server"}`, guild: d.guild };
     default:
@@ -159,7 +174,7 @@ export function NotificationsDesk() {
           </button>
         </div>
       </header>
-      <p className="muted small">Invites, friend requests and other things for you. Chats, mentions and voicemail stay in Talk.</p>
+      <p className="muted small">Invites, friend requests, @mentions and replies, and other things for you. Chats and voicemail stay in Talk.</p>
       <div className="notice-list">
         {list.map((n) => (
           <NoticeRow key={n.id} n={n} />

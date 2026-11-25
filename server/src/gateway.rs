@@ -140,6 +140,11 @@ fn status_of(_state: &Shared, uid: &str) -> String {
 /// sidebar as who's "here" in a chat. Rooms (voice / Watch Party) use voice states instead.
 static VIEWING: once_cell::sync::Lazy<dashmap::DashMap<u64, (String, String)>> = once_cell::sync::Lazy::new(Default::default);
 
+/// Has this person got this space open on some device right now?
+pub fn has_open(uid: &str, cid: &str) -> bool {
+    VIEWING.iter().any(|e| e.value().0 == uid && e.value().1 == cid)
+}
+
 /// Everyone shown as reading each chat (hidden and invisible people are left out).
 fn viewers_json(uid_filter: impl Fn(&str) -> bool) -> Vec<serde_json::Value> {
     let mut seen = std::collections::BTreeSet::new();
@@ -359,7 +364,8 @@ async fn session(state: Shared, auth: AuthUser, sock: WebSocket, quiet: bool) {
                                 let cid = if state.hub.is_quiet(conn_id) { None } else { v["channel_id"].as_str().map(str::to_string) };
                                 let ok = match &cid {
                                     Some(c) => match crate::models::load_channel(&state.db, c).await {
-                                        Ok(ch) => ch.guild_id.is_some() && ch.kind == "text" && crate::perms::require_channel(&state.db, &ch, &auth.id, crate::perms::VIEW).await.is_ok(),
+                                        // chat spaces, and rooms (voice, Watch) whose chat you can be in without talking
+                                        Ok(ch) => ch.guild_id.is_some() && ["text", "voice", "watch"].contains(&ch.kind.as_str()) && crate::perms::require_channel(&state.db, &ch, &auth.id, crate::perms::VIEW).await.is_ok(),
                                         Err(_) => false,
                                     },
                                     None => true,

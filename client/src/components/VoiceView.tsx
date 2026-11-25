@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { HearButton } from "./HearButton";
 import { Track, type Participant } from "livekit-client";
-import { memberName, useStore } from "../store";
+import { isUnread, memberName, useStore } from "../store";
+import { ChatView } from "./ChatView";
 import type { Channel } from "../types";
 import {
   closePopout,
@@ -58,7 +59,37 @@ export interface TileSpec {
   source: Track.Source;
 }
 
+/**
+ * A voice & video space, with its own chat beside it (closed until you open it). The chat is
+ * only for people in the space: in its call, or still there after hanging up.
+ */
 export function VoiceView({ channel }: { channel: Channel }) {
+  const [chat, setChat] = useState(false);
+  return (
+    <div className={"room-split" + (chat ? " chat-open" : "")}>
+      <VoiceRoom channel={channel} chat={chat} onChat={() => setChat(!chat)} />
+      {chat && (
+        <div className="room-chat">
+          <ChatView key={channel.id} channel={channel} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** The Chat button: a dot when there's chat you haven't seen, a red number for mentions. */
+export function RoomChatButton({ channel, open, onClick }: { channel: Channel; open: boolean; onClick: () => void }) {
+  const unread = useStore((s) => !open && isUnread(channel, s));
+  const mentions = useStore((s) => (open ? 0 : s.mentions[channel.id] || 0));
+  return (
+    <button className={"btn small room-chat-btn" + (open ? " primary" : "")} onClick={onClick} title={open ? "Close the chat" : "Open the chat"}>
+      <Icon name="chat" size={16} /> Chat
+      {mentions > 0 ? <span className="badge inline">{mentions}</span> : unread ? <span className="new-dot" title="New messages" /> : null}
+    </button>
+  );
+}
+
+function VoiceRoom({ channel, chat, onChat }: { channel: Channel; chat: boolean; onChat: () => void }) {
   const v = useVoice();
   const inThis = v.channelId === channel.id;
   const others = useStore(
@@ -76,6 +107,9 @@ export function VoiceView({ channel }: { channel: Channel }) {
   if (!inThis) {
     return (
       <div className="voice-view idle">
+        <div className="room-idle-chat">
+          <RoomChatButton channel={channel} open={chat} onClick={onChat} />
+        </div>
         <Icon name="speaker" size={48} />
         <h2>{channel.name}</h2>
         <p className="muted">
@@ -143,6 +177,8 @@ export function VoiceView({ channel }: { channel: Channel }) {
                 ? v.step + "…"
                 : "Connecting…"}
         </span>
+        <span className="flex-spacer" />
+        <RoomChatButton channel={channel} open={chat} onClick={onChat} />
       </header>
       {v.screen && (
         <div className="voice-alert sharing">

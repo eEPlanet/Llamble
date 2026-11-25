@@ -36,7 +36,7 @@ with sync_playwright() as p:
     pg.click(f".guild-btn[data-gid='{gid}']"); pg.wait_for_timeout(500)
     # nothing new on the board: tapping the server shows its channel list
     assert "m-nav" in shell.get_attribute("class"), shell.get_attribute("class")
-    assert pg.locator(f".guild-btn[data-gid='{gid}'] .board-dot").count() == 0
+    assert pg.locator(f".guild-btn[data-gid='{gid}'] .icon-new-dot").count() == 0
     pg.click(".channel:has-text('general')"); pg.wait_for_timeout(500)
     assert "m-main" in shell.get_attribute("class")
     # swipe right: the menu comes back; swipe left: back to the chat
@@ -58,17 +58,17 @@ with sync_playwright() as p:
 
     # someone posts a note to the server's board: a dot on its icon
     ok(requests.post(f"{B}/api/guilds/{gid}/notes", headers=H(M), json={"content": "Pizza night Friday!", "color": "yellow", "to": []}))
-    pg.wait_for_selector(f".guild-btn[data-gid='{gid}'] .board-dot", state="attached", timeout=5000)
+    pg.wait_for_selector(f".guild-btn[data-gid='{gid}'] .icon-new-dot", state="attached", timeout=5000)
     swipe(pg, 60, 300)
     pg.screenshot(path=f"{OUT}/phone-board-dot.png")
-    assert pg.locator(".guild-logo .board-dot").count() == 1, "Home has no dot"
+    assert pg.locator(".guild-logo .icon-new-dot").count() == 1, "Home has no dot"
     # tapping the server now opens its board, full screen
     pg.click(f".guild-btn[data-gid='{gid}']"); pg.wait_for_timeout(600)
     assert "m-main" in shell.get_attribute("class"), "the board didn't open"
     assert pg.locator("text=Pizza night Friday!").count() > 0
     pg.wait_for_timeout(300)
-    assert pg.locator(f".guild-btn[data-gid='{gid}'] .board-dot").count() == 0, "dot still there after seeing the board"
-    assert pg.locator(".guild-logo .board-dot").count() == 0, "Home's dot stayed after seeing it on the server"
+    assert pg.locator(f".guild-btn[data-gid='{gid}'] .icon-new-dot").count() == 0, "dot still there after seeing the board"
+    assert pg.locator(".guild-logo .icon-new-dot").count() == 0, "Home's dot stayed after seeing it on the server"
     # seen: next tap shows the channel list again
     swipe(pg, 60, 300)
     pg.click(f".guild-btn[data-gid='{gid}']"); pg.wait_for_timeout(500)
@@ -77,15 +77,15 @@ with sync_playwright() as p:
 
     # seen on Home instead: clears the server's dot too
     ok(requests.post(f"{B}/api/guilds/{gid}/notes", headers=H(M), json={"content": "Movie night Saturday", "color": "blue", "to": []}))
-    pg.wait_for_selector(".guild-logo .board-dot", state="attached", timeout=5000)
-    assert pg.locator(f".guild-btn[data-gid='{gid}'] .board-dot").count() == 1
+    pg.wait_for_selector(".guild-logo .icon-new-dot", state="attached", timeout=5000)
+    assert pg.locator(f".guild-btn[data-gid='{gid}'] .icon-new-dot").count() == 1
     pg.click(".guild-logo"); pg.wait_for_timeout(300)
     if "m-nav" in shell.get_attribute("class"):
         swipe(pg, 300, 60)
     pg.wait_for_timeout(500)
     assert pg.locator("text=Movie night Saturday").count() > 0
-    assert pg.locator(f".guild-btn[data-gid='{gid}'] .board-dot").count() == 0, "server dot stayed after seeing it on Home"
-    assert pg.locator(".guild-logo .board-dot").count() == 0
+    assert pg.locator(f".guild-btn[data-gid='{gid}'] .icon-new-dot").count() == 0, "server dot stayed after seeing it on Home"
+    assert pg.locator(".guild-logo .icon-new-dot").count() == 0
     print("seen on Home: both dots clear")
     b.close()
 print("phone nav ok")
