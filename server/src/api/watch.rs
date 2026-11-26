@@ -153,6 +153,11 @@ pub async fn hold_on_join(state: &Shared, cid: &str, uid: &str, p: i64) -> bool 
         return false;
     }
     HELD.entry(cid.to_string()).or_default().insert(uid.to_string());
+    // tell the room (the person coming in sees why their mic is off, and whoever runs it
+    // sees who's waiting)
+    if let Ok(ch) = load_channel(&state.db, cid).await {
+        changed(state, &ch).await;
+    }
     true
 }
 

@@ -607,6 +607,8 @@ function FilePlayer({ cid, item, vol }: { cid: string; item: WatchItem; vol: num
           lineUp();
         }}
         onCanPlay={() => lineUp()}
+        // it's playing after all (a tap, or Play pressed later): the autoplay note goes
+        onPlaying={() => setProblem((p) => (p && p.startsWith("Tap the video") ? "" : p))}
         onEnded={() => reportEnded(cid, item)}
         onError={() => {
           // the file as-is didn't play here: switch to Jellyfin's converted version
