@@ -28,6 +28,7 @@ import { BotToolsAdmin, GuildVoiceListen, MicTest, VoiceAiAdmin } from "./VoiceA
 import { WatchAdmin } from "./Watch";
 import { JOIN_MODES } from "./Discover";
 import { GreetingSettings } from "./VoiceMessage";
+import { reasonLabel, unblock } from "../safety";
 import { Recordings } from "./Library";
 import { ACCENTS, DEFAULT_ACCENT, THEMES, applyAccent, resetAccent, applyTheme, currentAccent, currentTheme, customAccent, customBase, setCustomAccent, setCustomBase, themeFromBase } from "../theme";
 import { androidListener, androidSend, isAndroidApp } from "../android";
@@ -591,6 +592,7 @@ function BotSettings({ guildId }: { guildId: string }) {
 export function UserSettings({ tab: initial }: { tab?: string }) {
   const [tab, setTab] = useState(initial || "account");
   const me = useStore((s) => s.me)!;
+  const ownsServer = useStore((s) => Object.values(s.guilds).some((g) => g.owner_id === s.me?.id));
   return (
     <SettingsFrame
       title="My Settings"
@@ -609,6 +611,8 @@ export function UserSettings({ tab: initial }: { tab?: string }) {
         { id: "performance", label: "Performance", hidden: !window.llambleNative?.metrics },
         { id: "recordings", label: "Recordings" },
         { id: "sessions", label: "Devices" },
+        { id: "blocked", label: "Blocked" },
+        { id: "reports", label: "Reports", hidden: !me.is_admin && !ownsServer },
         { id: "family", label: "Family", hidden: !!me.is_kid },
         // the Llamble server itself (the NAS): not the "servers" people chat in
         { id: "nas-section", label: "My Llamble Instance (NAS)", section: true, hidden: !me.is_admin },
@@ -637,6 +641,8 @@ export function UserSettings({ tab: initial }: { tab?: string }) {
       {tab === "sessions" && <Sessions />}
       {tab === "admin" && <Admin />}
       {tab === "demo" && <DemoAccount />}
+      {tab === "blocked" && <BlockedPeople />}
+      {tab === "reports" && <Reports />}
       {tab === "family" && <Family />}
       {tab === "remote" && <RemoteAccess />}
       {tab === "server" && <ServerConfig />}
@@ -682,7 +688,7 @@ function About() {
       </p>
       <p className="muted small">
         Free to use and to run on your own server. The code is public so anyone can check what it does, under the PolyForm Shield
-        license: you can't use it to build or sell a rival service. Packs, themes and games from the store have their own terms.
+        license: you can't use it to build or sell a rival service.
       </p>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         <button className="btn" onClick={() => open("license")}>
@@ -1340,6 +1346,130 @@ function levelLabel(u: User) {
 }
 
 /** A sealed-off demo world on this instance, for app store reviewers (or showing Llamble to someone). */
+/** The people you've blocked, to unblock. */
+function BlockedPeople() {
+  const ids = useStore((s) => s.blocked);
+  const [list, setList] = useState<{ user: User; created_at: number }[] | null>(null);
+  useEffect(() => {
+    api("/api/blocks").then(setList).catch(() => setList([]));
+  }, [ids.join(",")]);
+  return (
+    <div>
+      <h2>Blocked</h2>
+      <p className="muted small">
+        People you've blocked can't message you, call you or send you a friend request. In servers you share, their messages are folded away. They aren't told. To block
+        someone, open their profile or a message of theirs.
+      </p>
+      {list === null ? (
+        <p className="muted">Loading…</p>
+      ) : !list.length ? (
+        <p className="muted">You haven't blocked anyone.</p>
+      ) : (
+        list.map((b) => (
+          <div key={b.user.id} className="settings-row" style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0" }}>
+            <Avatar user={b.user} size={32} />
+            <span style={{ flex: 1 }}>
+              {b.user.display_name} <span className="muted small">@{b.user.username}</span>
+            </span>
+            <button className="btn" onClick={() => unblock(b.user.id, b.user.display_name)}>
+              Unblock
+            </button>
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
+type Report = {
+  id: string;
+  reporter: User;
+  user: User;
+  message_id: string | null;
+  channel_id: string | null;
+  guild: { id: string; name: string } | null;
+  reason: string;
+  note: string;
+  snapshot: { content?: string; files?: { name: string }[]; channel_name?: string; kind?: string };
+  message_there: boolean;
+  status: string;
+  handled_by: User | null;
+  created_at: number;
+};
+
+/** Reports people sent about messages or people (admins see all; a server's owner sees their server's). */
+function Reports() {
+  const me = useStore((s) => s.me)!;
+  const [list, setList] = useState<Report[] | null>(null);
+  const load = () => api("/api/reports").then(setList).catch((e) => (toast(e.message, "error"), setList([])));
+  useEffect(() => {
+    load();
+  }, []);
+  const act = (r: Report, action: string) =>
+    api(`/api/reports/${r.id}/resolve`, { body: { action } })
+      .then(() => (toast(action === "delete" ? "Message deleted" : action === "ban" ? `${r.user.display_name} is banned from ${r.guild?.name}` : "Dismissed"), load()))
+      .catch((e) => toast(e.message, "error"));
+  const done: Record<string, string> = { dismissed: "Dismissed", deleted: "Message deleted", banned: "Banned from the server" };
+  return (
+    <div>
+      <h2>Reports</h2>
+      <p className="muted small">
+        Messages and people that someone here reported. {me.is_admin ? "As an admin you see every report on this Llamble; a server's owner also sees reports from their server." : "You see reports from the servers you own."}{" "}
+        Each keeps a copy of the message, even if it's deleted later.{me.is_admin ? " To remove an account, use Accounts." : ""}
+      </p>
+      {list === null ? (
+        <p className="muted">Loading…</p>
+      ) : !list.length ? (
+        <p className="muted">No reports.</p>
+      ) : (
+        list.map((r) => (
+          <div key={r.id} className={"report-card" + (r.status === "open" ? " open" : "")}>
+            <div className="report-head">
+              <Avatar user={r.user} size={32} />
+              <span>
+                <b>{r.user.display_name}</b> <span className="muted small">@{r.user.username}</span>
+                <div className="muted small">
+                  {reasonLabel(r.reason)} · reported by {r.reporter.display_name} · {new Date(r.created_at).toLocaleString()}
+                  {r.guild ? ` · ${r.guild.name}${r.snapshot.channel_name ? " #" + r.snapshot.channel_name : ""}` : r.message_id ? " · in a DM or party" : " · about the person"}
+                </div>
+              </span>
+            </div>
+            {r.message_id && (
+              <blockquote className="report-quote">
+                {r.snapshot.content || <span className="muted">(no text)</span>}
+                {!!r.snapshot.files?.length && <div className="muted small">Files: {r.snapshot.files.map((f) => f.name).join(", ")}</div>}
+              </blockquote>
+            )}
+            {r.note && <p className="small">“{r.note}”</p>}
+            {r.status === "open" ? (
+              <div className="report-actions">
+                {r.message_id && r.message_there && (
+                  <button className="btn danger" onClick={() => act(r, "delete")}>
+                    Delete message
+                  </button>
+                )}
+                {r.guild && (
+                  <button className="btn danger" onClick={() => act(r, "ban")}>
+                    Ban from {r.guild.name}
+                  </button>
+                )}
+                <button className="btn" onClick={() => act(r, "dismiss")}>
+                  Dismiss
+                </button>
+              </div>
+            ) : (
+              <div className="muted small">
+                {done[r.status] || r.status}
+                {r.handled_by ? ` by ${r.handled_by.display_name}` : ""}
+              </div>
+            )}
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
 function DemoAccount() {
   const [d, setD] = useState<any>(null);
   const [busy, setBusy] = useState(false);

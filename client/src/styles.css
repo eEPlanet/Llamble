@@ -1781,3 +1781,16 @@ body.pop-body > .pop { height: 100vh; }
   .watch-split:not(.full) .watch-chat { flex: 1; height: auto; min-height: 0; }
 }
 .watch-tab { display: inline-flex; align-items: center; gap: 6px; }
+
+/* ---- block and report ---- */
+.profile-safety { display: flex; gap: 14px; justify-content: center; margin-top: 10px; }
+.profile-safety .danger-text, .danger-text { color: var(--danger, #ed4245); }
+.msg.blocked-msg { display: flex; align-items: center; gap: 8px; padding: 4px 16px 4px 72px; min-height: 0; }
+.radio-row { display: flex; align-items: center; gap: 8px; margin: 4px 0; cursor: pointer; font-weight: normal; text-transform: none; letter-spacing: 0; }
+.radio-row input { width: auto; margin: 0; }
+.report-reasons { margin: 8px 0 12px; }
+.report-card { border: 1px solid var(--bg-modifier, rgba(255,255,255,0.08)); border-radius: 8px; padding: 10px 12px; margin: 10px 0; opacity: 0.75; }
+.report-card.open { opacity: 1; border-color: rgba(237, 66, 69, 0.45); }
+.report-head { display: flex; gap: 10px; align-items: flex-start; }
+.report-quote { margin: 8px 0; padding: 6px 10px; border-left: 3px solid rgba(255,255,255,0.25); white-space: pre-wrap; word-break: break-word; }
+.report-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }

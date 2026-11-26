@@ -252,7 +252,7 @@ async fn rows(state: &Shared, where_: &str, binds: &[&str], limit: i64) -> ApiRe
 async fn audience(state: &Shared, r: &Row) -> Vec<String> {
     match &r.guild_id {
         Some(g) => crate::state::guild_member_ids(&state.db, g).await,
-        None => state.hub.online_users(),
+        None => crate::demo::without(state.hub.online_users()),
     }
 }
 

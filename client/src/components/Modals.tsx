@@ -13,6 +13,7 @@ import { Avatar, BotTag, Icon } from "./common";
 import { ScreenPicker } from "./VoiceView";
 import { DiscoverModal } from "./Discover";
 import { ServerSettings, UserSettings } from "./Settings";
+import { block, report, unblock, useBlocked, REASONS } from "../safety";
 
 export function Modals() {
   const modals = useUI((s) => s.modals);
@@ -80,6 +81,8 @@ function ModalBody({ m }: { m: ModalSpec }) {
       return <LlambleInvite />;
     case "discover":
       return <DiscoverModal guildId={m.guildId} />;
+    case "report":
+      return <ReportModal userId={m.userId} messageId={m.messageId} />;
   }
 }
 
@@ -423,6 +426,7 @@ function Profile({ userId, guildId }: { userId: string; guildId: string | null }
   const game = useStore((s) => s.games[userId]);
   const manageRoles = guildId ? can(guildId, P.MANAGE_ROLES) : false;
   const prof = useProfile(user && !user.is_bot ? userId : null);
+  const blocked = useBlocked(userId);
   if (!user) return null;
   const toggleRole = (rid: string, has: boolean) =>
     api(`/api/guilds/${guildId}/members/${userId}/roles/${rid}`, { method: has ? "DELETE" : "PUT" }).catch((e) => toast(e.message, "error"));
@@ -498,8 +502,99 @@ function Profile({ userId, guildId }: { userId: string; guildId: string | null }
             )}
           </div>
         )}
+        {userId !== me.id && !user.is_bot && (
+          <div className="profile-safety">
+            {blocked ? (
+              <button className="btn link small" onClick={() => unblock(userId, user.display_name)}>
+                Unblock
+              </button>
+            ) : (
+              <button className="btn link small danger-text" onClick={() => (closeModal(), block(userId, user.display_name))}>
+                Block
+              </button>
+            )}
+            <button className="btn link small danger-text" onClick={() => (closeModal(), report(userId))}>
+              Report
+            </button>
+          </div>
+        )}
       </div>
     </div>
+  );
+}
+
+/** Report a message or a person to the people who run this Llamble. */
+function ReportModal({ userId, messageId }: { userId: string; messageId?: string }) {
+  const user = useStore((s) => s.users[userId]);
+  const blocked = useBlocked(userId);
+  const [reason, setReason] = useState("");
+  const [note, setNote] = useState("");
+  const [alsoBlock, setAlsoBlock] = useState(false);
+  const [done, setDone] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const name = user?.display_name || "this person";
+  const send = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      await api("/api/reports", { body: messageId ? { message_id: messageId, reason, note } : { user_id: userId, reason, note } });
+      if (alsoBlock && !blocked) {
+        await api(`/api/blocks/${userId}`, { method: "PUT" });
+        useStore.setState((s) => ({ blocked: s.blocked.includes(userId) ? s.blocked : [...s.blocked, userId] }));
+      }
+      setDone(true);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (done)
+    return (
+      <div className="modal">
+        <h2>Thanks for telling us</h2>
+        <p className="muted">
+          Your report went to the people who run this Llamble{messageId ? ", and the server's owner" : ""}, with a copy of {messageId ? "the message" : "who it's about"}. They can remove the message or the person. {name} isn't told who reported them.
+        </p>
+        <div className="modal-foot">
+          <button className="btn primary" onClick={closeModal}>
+            Done
+          </button>
+        </div>
+      </div>
+    );
+  return (
+    <form className="modal" onSubmit={send}>
+      <h2>{messageId ? "Report message" : `Report ${name}`}</h2>
+      <p className="muted small">Goes to the people who run this Llamble{messageId ? " and this server's owner" : ""}. {name} isn't told who reported them.</p>
+      <div className="report-reasons">
+        {REASONS.map(([k, label]) => (
+          <label key={k} className="radio-row">
+            <input type="radio" name="reason" checked={reason === k} onChange={() => setReason(k)} /> {label}
+          </label>
+        ))}
+      </div>
+      <label>
+        Anything else? <span className="muted small">(optional)</span>
+        <textarea value={note} onChange={(e) => setNote(e.target.value)} maxLength={1000} rows={3} />
+      </label>
+      {!blocked && (
+        <label className="radio-row">
+          <input type="checkbox" checked={alsoBlock} onChange={(e) => setAlsoBlock(e.target.checked)} /> Also block {name}
+        </label>
+      )}
+      {error && <div className="form-error">{error}</div>}
+      <div className="modal-foot">
+        <button type="button" className="btn link" onClick={closeModal}>
+          Cancel
+        </button>
+        <button className="btn danger" disabled={busy || !reason}>
+          {busy ? "Sending…" : "Report"}
+        </button>
+      </div>
+    </form>
   );
 }
 

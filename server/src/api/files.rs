@@ -289,7 +289,16 @@ pub async fn can_view_file(state: &Shared, auth: &AuthUser, f: &FileRow) -> ApiR
     .bind(&f.id)
     .fetch_optional(&state.db)
     .await?;
-    if public.is_some() || crate::api::news::can_view_image(state, &auth.id, &f.id).await || crate::api::watch::library_file_ok(state, &f.id).await || crate::api::watch::library_extra_ok(state, &f.id).await || crate::api::greeting::is_greeting_file(state, &f.id).await {
+    // a demo account doesn't get the owner's shared extras (movie library, GIFs) or anyone's
+    // pictures from outside the sandbox
+    if crate::demo::is_demo(&auth.id) {
+        if crate::demo::apart(state, &auth.id, &f.uploader_id) {
+            return Ok(false);
+        }
+    } else if crate::api::watch::library_file_ok(state, &f.id).await || crate::api::watch::library_extra_ok(state, &f.id).await {
+        return Ok(true);
+    }
+    if public.is_some() || crate::api::news::can_view_image(state, &auth.id, &f.id).await || crate::api::greeting::is_greeting_file(state, &f.id).await {
         return Ok(true);
     }
     let channels: Vec<String> = sqlx::query_scalar(

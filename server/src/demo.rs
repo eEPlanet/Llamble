@@ -29,13 +29,15 @@ pub fn is_demo(uid: &str) -> bool {
     DEMO.contains(uid)
 }
 
-/// Are these two in different worlds (one in the demo sandbox, one not)? Bots (the instance's
-/// AI) belong to both.
-pub fn apart(state: &Shared, a: &str, b: &str) -> bool {
-    if a == state.bot_id || b == state.bot_id {
-        return false;
-    }
+/// Are these two in different worlds (one in the demo sandbox, one not)? The instance's AI
+/// belongs to the instance's owner, not to the app, so it's on the other side too.
+pub fn apart(_state: &Shared, a: &str, b: &str) -> bool {
     is_demo(a) != is_demo(b)
+}
+
+/// Everyone in the list except demo accounts (for instance-wide announcements).
+pub fn without(ids: Vec<String>) -> Vec<String> {
+    ids.into_iter().filter(|u| !is_demo(u)).collect()
 }
 
 /// What a demo account may never use at all (checked on every request it makes).
@@ -47,6 +49,16 @@ pub fn blocked(method: &axum::http::Method, path: &str) -> Option<&'static str> 
     }
     if p.starts_with("/api/guilds/") && (p.contains("/invite") || p.ends_with("/invites") || p.contains("/join-requests")) {
         return Some("the demo account can't invite people");
+    }
+    // what the owner added to this server (their movies, their AI) isn't part of the app
+    if starts("/api/watch/library") || starts("/api/watch/jellyfin") || starts("/api/watch/jf") || starts("/api/bot") || starts("/api/voice-ai") {
+        return Some("that isn't available on the demo account");
+    }
+    if p.starts_with("/api/channels/") && (p.ends_with("/imagine") || p.ends_with("/listen")) {
+        return Some("that isn't available on the demo account");
+    }
+    if p.starts_with("/api/guilds/") && (p.ends_with("/bot") || p.ends_with("/voice-listen")) {
+        return Some("that isn't available on the demo account");
     }
     if p == "/api/news" && method != axum::http::Method::GET {
         return Some("that isn't available on the demo account");
@@ -153,7 +165,7 @@ async fn wipe(state: &Shared) {
     for cid in qq.fetch_all(&state.db).await.unwrap_or_default() {
         let _ = sqlx::query("DELETE FROM channels WHERE id = ?").bind(&cid).execute(&state.db).await;
     }
-    for (table, col) in [("friends", "user_id"), ("friends", "other_id"), ("notifications", "user_id"), ("members", "user_id")] {
+    for (table, col) in [("friends", "user_id"), ("friends", "other_id"), ("notifications", "user_id"), ("members", "user_id"), ("blocks", "user_id"), ("blocks", "blocked_id")] {
         let q = format!("DELETE FROM {table} WHERE {col} IN ({list})");
         let mut qq = sqlx::query(&q);
         for i in &ids {

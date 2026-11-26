@@ -547,7 +547,7 @@ pub async fn config_json(state: &Shared) -> Value {
 
 pub async fn announce_config(state: &Shared) {
     let v = config_json(state).await;
-    state.hub.send_users(&state.hub.online_users(), "CONFIG_UPDATE", &json!({ "voice_ai": v }));
+    state.hub.send_users(&crate::demo::without(state.hub.online_users()), "CONFIG_UPDATE", &json!({ "voice_ai": v }));
 }
 
 // ---------------------------------------------------------------- the API

@@ -225,7 +225,8 @@ async fn snapshot(state: &Shared, cid: &str, viewer: &str, p: i64) -> ApiResult<
         "run": p & (perms::WATCH_RUN | perms::MANAGE_CHANNELS) != 0,
         "held": held_in(cid),
         "asked": asked_in(cid),
-        "sources": { "library": s.watch_library, "device": s.watch_device_stream },
+        // the owner's movies aren't offered to a demo account
+        "sources": { "library": s.watch_library && !crate::demo::is_demo(viewer), "device": s.watch_device_stream },
     }))
 }
 
@@ -315,6 +316,9 @@ pub async fn add(State(state): State<Shared>, auth: AuthUser, Path(cid): Path<St
                 }
                 ("url", u.to_string(), if title.is_empty() { name } else { title })
             }
+        }
+        "jellyfin" | "library" if crate::demo::is_demo(&auth.id) => {
+            return Err(AppError::forbidden_msg("that isn't available on the demo account"));
         }
         "jellyfin" => {
             let t = crate::api::jellyfin::queue_title(&state, req.src.trim()).await?;

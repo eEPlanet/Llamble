@@ -714,6 +714,25 @@ pub async fn delete(State(state): State<Shared>, auth: AuthUser, Path(id): Path<
 }
 
 /// Active shows (for REC badges when the app connects).
+/// The live shows this person is told about at sign-in. A demo account only hears about
+/// shows in its own sandbox.
+pub async fn active_for(state: &Shared, uid: &str) -> Vec<Value> {
+    let all = active(state).await;
+    if !crate::demo::is_demo(uid) {
+        return all;
+    }
+    let mut out = vec![];
+    for v in all {
+        let cid = v["channel_id"].as_str().unwrap_or_default().to_string();
+        if let Ok(ch) = load_channel(&state.db, &cid).await {
+            if crate::state::channel_audience(&state.db, &ch).await.iter().any(|u| u == uid) {
+                out.push(v);
+            }
+        }
+    }
+    out
+}
+
 pub async fn active(state: &Shared) -> Vec<Value> {
     let ids: Vec<String> = sqlx::query_scalar("SELECT id FROM shows WHERE status IN ('setup','recording')").fetch_all(&state.db).await.unwrap_or_default();
     let mut out = vec![];

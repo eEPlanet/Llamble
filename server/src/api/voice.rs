@@ -216,7 +216,15 @@ pub async fn ring(State(state): State<Shared>, auth: AuthUser, Path(cid): Path<S
     require_channel(&state.db, &ch, &auth.id, perms::CONNECT).await?;
     // already in the call don't need ringing
     let in_call: Vec<String> = state.hub.voice.iter().filter(|v| v.channel_id == cid).map(|v| v.user_id.clone()).collect();
-    let others: Vec<String> = channel_audience(&state.db, &ch).await.into_iter().filter(|u| u != &auth.id && !in_call.contains(u)).collect();
+    let mut others: Vec<String> = channel_audience(&state.db, &ch).await.into_iter().filter(|u| u != &auth.id && !in_call.contains(u)).collect();
+    // nobody rings someone who's blocked them (or whom they've blocked)
+    let mut open = vec![];
+    for u in others.drain(..) {
+        if !crate::api::safety::blocked_either(&state, &auth.id, &u).await {
+            open.push(u);
+        }
+    }
+    let others = open;
     if others.is_empty() {
         return Ok(Json(json!({ "ok": true, "ringing": 0 })));
     }
@@ -366,6 +374,9 @@ pub async fn add_to_call(State(state): State<Shared>, auth: AuthUser, Path(cid):
         }
         if !members.contains(&u) && !crate::api::social::is_friend(&state, &auth.id, &u).await {
             return Err(AppError::bad("you can only add your friends to a call"));
+        }
+        if crate::api::safety::blocked_either(&state, &auth.id, &u).await {
+            return Err(AppError::bad("you can't add this person to a call"));
         }
         added.push(u);
     }

@@ -6,6 +6,7 @@ import { clearNotice, markRead, openCardChat, useNotices, type Notice } from "..
 import { openFriend, openHome, selectChannel, useStore } from "../store";
 import { openModal, toast, useUI } from "../ui";
 import { Avatar, GuildIcon } from "./common";
+import { reasonLabel } from "../safety";
 
 function ago(t: number): string {
   const s = Math.max(1, Math.round((Date.now() - t) / 1000));
@@ -68,6 +69,12 @@ function describe(n: Notice): { text: string; who?: any; guild?: any; open?: () 
         open: () => openMessage(d.kind === "party" ? "@parties" : d.guild?.id, d.channel_id, d.message_id),
       };
     }
+    case "report":
+      return {
+        text: `${nameOf(d.about)} was reported (${reasonLabel(d.reason).toLowerCase()})${d.guild?.name ? ` in ${d.guild.name}` : ""}${d.preview ? `: “${d.preview}”` : ""}`,
+        who: d.about,
+        open: () => openModal({ kind: "userSettings", tab: "reports" }),
+      };
     case "server_removed":
       return { text: `You were ${d.banned ? "banned from" : "removed from"} ${d.guild?.name || "a server"}`, guild: d.guild };
     default:

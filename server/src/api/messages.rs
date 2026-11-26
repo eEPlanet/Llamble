@@ -112,6 +112,10 @@ pub async fn create_message(State(state): State<Shared>, auth: AuthUser, Path(ci
     crate::kids::check_quiet(&state, &auth.id).await?;
     if ch.guild_id.is_none() {
         let others: Vec<String> = sqlx::query_scalar("SELECT user_id FROM dm_members WHERE channel_id = ? AND user_id != ?").bind(&ch.id).bind(&auth.id).fetch_all(&state.db).await?;
+        // a 1-on-1 DM with someone either of you has blocked is closed
+        if ch.kind == "dm" && others.len() == 1 && crate::api::safety::blocked_either(&state, &auth.id, &others[0]).await {
+            return Err(AppError::forbidden_msg("You can't message this person."));
+        }
         for o in others {
             if let Err(kid) = crate::kids::dm_allowed(&state, &auth.id, &o).await {
                 let target = if kid == auth.id { o.clone() } else { auth.id.clone() };
@@ -432,6 +436,9 @@ pub async fn open_dm(State(state): State<Shared>, auth: AuthUser, Json(req): Jso
     }
     if crate::demo::apart(&state, &auth.id, &req.recipient_id) {
         return Err(AppError::forbidden());
+    }
+    if crate::api::safety::blocked_either(&state, &auth.id, &req.recipient_id).await {
+        return Err(AppError::forbidden_msg("You can't message this person."));
     }
     let shares: Option<i64> = sqlx::query_scalar(
         "SELECT 1 FROM members a JOIN members b ON a.guild_id = b.guild_id WHERE a.user_id = ? AND b.user_id = ? LIMIT 1",

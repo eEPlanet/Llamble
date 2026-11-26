@@ -67,6 +67,8 @@ async fn ready_payload(state: &Shared, auth: &AuthUser) -> anyhow::Result<Value>
         })
         .map(|v| serde_json::to_value(v.value()).unwrap())
         .collect();
+    // a demo account sees none of the owner's extras (their AI, their movies)
+    let demo = crate::demo::is_demo(&auth.id);
     Ok(json!({
         "user": user,
         "guilds": guilds,
@@ -74,6 +76,7 @@ async fn ready_payload(state: &Shared, auth: &AuthUser) -> anyhow::Result<Value>
         "friends": crate::api::social::list_friends(axum::extract::State(state.clone()), auth.clone()).await.map(|j| j.0).unwrap_or(json!([])),
         "read_states": reads.into_iter().map(|(c, m)| json!({ "channel_id": c, "last_read_id": m })).collect::<Vec<_>>(),
         "presences": presences,
+        "blocked": crate::api::safety::my_blocks(state, &auth.id).await,
         "my_status": { "status": status_of(state, &auth.id), "hide_activity": hidden(&auth.id) },
         // not seen the tutorial yet: the app offers it
         // (LLAMBLE_SKIP_TUTORIAL=1: automated tests sign in fresh accounts and don't want the tour)
@@ -81,16 +84,16 @@ async fn ready_payload(state: &Shared, auth: &AuthUser) -> anyhow::Result<Value>
         // who's reading which chats (the app shows only the chats this person can see)
         "viewers": visible_viewers(state, &auth.id).await,
         "voice_states": voice,
-        "shows": crate::shows::active(state).await,
+        "shows": crate::shows::active_for(state, &auth.id).await,
         "config": {
             "voice_enabled": crate::voice_server::enabled(state),
-            "voice_ai": crate::voicebot::config_json(state).await,
-            "images": crate::images::config_json(state).await,
+            "voice_ai": if demo { json!({ "available": false, "notice": "", "guilds": [] }) } else { crate::voicebot::config_json(state).await },
+            "images": if demo { json!({ "enabled": false }) } else { crate::images::config_json(state).await },
             "max_upload_bytes": state.s().max_upload_bytes(),
             "guild_create": state.s().guild_create,
             "people_name": state.s().people_name,
             "member_invites": state.s().member_invites,
-            "watch": { "on": state.s().watch_party, "library": state.s().watch_library, "device": state.s().watch_device_stream, "jellyfin": state.s().watch_library && !state.s().jellyfin_url.is_empty() && !state.s().jellyfin_libraries.is_empty() },
+            "watch": { "on": state.s().watch_party, "library": state.s().watch_library && !demo, "device": state.s().watch_device_stream, "jellyfin": !demo && state.s().watch_library && !state.s().jellyfin_url.is_empty() && !state.s().jellyfin_libraries.is_empty() },
             "media": {
                 "max_share": state.s().max_share,
                 "max_camera": state.s().max_camera,
@@ -101,7 +104,7 @@ async fn ready_payload(state: &Shared, auth: &AuthUser) -> anyhow::Result<Value>
             "public_domain": crate::remote::public_domain(state).await,
             "version": crate::config::server_version(),
             "client_download": crate::config::client_download_url(),
-            "bot": { "id": state.bot_id, "name": state.s().bot_name, "server_backend": crate::ai::server_llama_url(state).await.is_some(), "worker_policy": crate::bot::gpu_policy(state).await },
+            "bot": if demo { Value::Null } else { json!({ "id": state.bot_id, "name": state.s().bot_name, "server_backend": crate::ai::server_llama_url(state).await.is_some(), "worker_policy": crate::bot::gpu_policy(state).await }) },
         }
     }))
 }

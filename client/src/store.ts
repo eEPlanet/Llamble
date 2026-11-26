@@ -42,6 +42,8 @@ interface State {
   games: Record<string, string>;
   /** people who turned on "Hide what I'm doing" (still online, but not in Right now) */
   activityHidden: Record<string, boolean>;
+  /** people I blocked (their messages fold away; they can't DM, ring or friend me) */
+  blocked: string[];
   /** who is reading each chat right now (people hiding what they do are left out) */
   viewers: Record<string, string[]>;
   /** my own status and "hide what I'm doing", saved on my account */
@@ -94,6 +96,7 @@ export const useStore = create<State>(() => ({
   presences: {},
   games: {},
   activityHidden: {},
+  blocked: [],
   viewers: {},
   myStatus: { status: "online", hide_activity: false },
   voiceStates: {},
@@ -379,7 +382,7 @@ export function handleEvent(t: string, d: any) {
       const voiceStates: Record<string, VoiceState> = {};
       for (const v of d.voice_states) voiceStates[v.user_id] = v;
       if (!st.selectedGuild.startsWith("@") && !st.guilds[st.selectedGuild]) st.selectedGuild = "@home";
-      set({ ...st, me: d.user, ready: true, readStates, presences, games, activityHidden, myStatus, viewers, voiceStates, config: d.config, messages: {}, hasMore: {} });
+      set({ ...st, me: d.user, ready: true, readStates, presences, games, activityHidden, blocked: d.blocked || [], myStatus, viewers, voiceStates, config: d.config, messages: {}, hasMore: {} });
       break;
     }
     case "GUILD_CREATE": {
@@ -404,6 +407,10 @@ export function handleEvent(t: string, d: any) {
       const users = { ...s.users };
       for (const u of d.recipients || []) users[u.id] = u;
       set({ channels: { ...s.channels, [d.id]: { ...s.channels[d.id], ...d } }, users });
+      break;
+    }
+    case "BLOCKS_UPDATE": {
+      set({ blocked: d.blocked || [] });
       break;
     }
     case "FRIEND_UPDATE": {

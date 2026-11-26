@@ -101,6 +101,9 @@ pub async fn add_friend(State(state): State<Shared>, auth: AuthUser, Json(req): 
     if other == auth.id {
         return Err(AppError::bad("you can't friend yourself"));
     }
+    if crate::api::safety::blocked_either(&state, &auth.id, &other).await {
+        return Err(AppError::forbidden_msg("You can't send this person a friend request."));
+    }
     // kids: a parent approves the person first (same rule as DMs)
     if let Err(kid) = crate::kids::dm_allowed(&state, &auth.id, &other).await {
         let target = if kid == auth.id { other.clone() } else { auth.id.clone() };

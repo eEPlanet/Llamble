@@ -86,6 +86,38 @@ kids = ok(requests.get(f"{B}/api/kids", headers=H(A))); kid = (kids[0].get("id")
 r = requests.post(f"{B}/api/kids/{kid}/contacts", headers=H(A), json={"user": "llamble-demo"}); assert r.status_code == 400 and "no account named" in r.text, r.text
 print("the family (admin included) can't find, friend, message, party, invite or see the demo")
 
+# the owner's extras aren't part of the app: no movie library, no Jellyfin, no AI, no family GIFs
+import io
+from PIL import Image
+ok(requests.put(f"{B}/api/admin/settings", headers=H(A), json={"watch_party": True, "watch_library": True}))
+mv = requests.post(B + "/api/files", headers=H(A), files={"file": ("Home Movie.mp4", b"\x00\x00\x00\x18ftypisom" + b"\x00" * 100, "video/mp4")}).json()
+mv = mv[0] if isinstance(mv, list) else mv
+ok(requests.post(f"{B}/api/watch/library", headers=H(A), json={"file_id": mv["id"], "title": "Home Movie"}))
+g = Image.new("P", (32, 32)); bio = io.BytesIO(); g.save(bio, "GIF"); bio.seek(0)
+gf = ok(requests.post(B + "/api/files", headers=H(W), files={"file": ("family.gif", bio, "image/gif")}))
+ok(requests.post(f"{B}/api/gifs", headers=H(W), json={"file_id": gf["id"], "title": "family dance"}))
+D = ok(login(d["username"], d["password"]))["token"]
+rd = ready(D)
+cfg = rd["config"]
+assert cfg["bot"] is None and not cfg["images"]["enabled"] and not cfg["voice_ai"]["available"], cfg
+assert not cfg["watch"]["library"] and not cfg["watch"]["jellyfin"], cfg["watch"]
+for path in ["/api/watch/library", "/api/watch/jellyfin/libraries", "/api/watch/jellyfin/items", "/api/bot"]:
+    assert requests.get(B + path, headers=H(D)).status_code == 403, path
+assert requests.post(f"{B}/api/bot/dm", headers=H(D)).status_code == 403
+assert requests.post(f"{B}/api/channels/{general}/imagine", headers=H(D), json={"prompt": "a cat"}).status_code == 403
+assert requests.get(f"{B}/api/files/{mv['id']}", headers=H(D)).status_code in (403, 404)
+assert requests.get(f"{B}/api/files/{gf['id']}", headers=H(D)).status_code in (403, 404)
+assert ok(requests.get(f"{B}/api/gifs", headers=H(D))) == []
+watch = [c["id"] for c in rd["guilds"][0]["channels"] if c["kind"] == "watch"]
+if watch:
+    assert requests.post(f"{B}/api/channels/{watch[0]}/watch/queue", headers=H(D), json={"kind": "library", "src": mv["id"]}).status_code == 403
+    assert not ok(requests.get(f"{B}/api/channels/{watch[0]}/watch", headers=H(D)))["sources"]["library"]
+# the family still has all of it
+assert ok(requests.get(f"{B}/api/watch/library", headers=H(W)))["movies"]
+assert len(ok(requests.get(f"{B}/api/gifs", headers=H(W)))) == 1
+assert ready(W)["config"]["bot"]
+print("the demo gets none of the owner's movies, AI or GIFs; the family still does")
+
 # reset: the content comes back, the sign-in stays
 ok(requests.post(f"{B}/api/channels/{general}/messages", headers=H(D), json={"content": "a reviewer's mess"}))
 r = ok(requests.post(f"{B}/api/admin/demo/reset", headers=H(A)))

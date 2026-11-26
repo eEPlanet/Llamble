@@ -257,7 +257,8 @@ pub async fn put_settings(State(state): State<Shared>, auth: AuthUser, Json(req)
         tokio::spawn(async move { crate::api::news::refresh(&st).await });
     }
     // everyone connected picks up the new limits right away (no reconnect needed)
-    let online = state.hub.online_users();
+    // (demo accounts get their own view of these at sign-in: no movies, no AI)
+    let online = crate::demo::without(state.hub.online_users());
     state.hub.send_users(
         &online,
         "CONFIG_UPDATE",

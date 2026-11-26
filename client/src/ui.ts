@@ -21,7 +21,8 @@ export type ModalSpec =
   | { kind: "party"; partyId?: string; with?: string[] }
   | { kind: "newDm" }
   | { kind: "llambleInvite" }
-  | { kind: "discover"; guildId?: string };
+  | { kind: "discover"; guildId?: string }
+  | { kind: "report"; userId: string; messageId?: string };
 
 export interface MenuItem {
   label: string;

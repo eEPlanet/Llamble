@@ -332,7 +332,7 @@ async fn server_model_problem(state: &Shared) -> String {
 }
 
 pub async fn maybe_respond(state: &Shared, ch: &Channel, row_id: &str, author_id: &str, content: &str, reply_to: Option<&str>) {
-    if author_id == state.bot_id {
+    if author_id == state.bot_id || crate::demo::is_demo(author_id) {
         return;
     }
     let triggered = match &ch.guild_id {

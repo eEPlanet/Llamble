@@ -39,6 +39,13 @@ pub async fn list(State(state): State<Shared>, auth: AuthUser, Query(q): Query<G
     if q.favorites.unwrap_or(false) {
         sql.push_str(" AND fav.user_id IS NOT NULL");
     }
+    // the GIFs people added here are theirs: a demo account only sees ones added in the demo,
+    // and the demo's never show up for anyone else
+    if crate::demo::is_demo(&auth.id) {
+        sql.push_str(" AND g.uploader_id IN (SELECT id FROM users WHERE demo = 1)");
+    } else {
+        sql.push_str(" AND g.uploader_id NOT IN (SELECT id FROM users WHERE demo = 1)");
+    }
     sql.push_str(" ORDER BY fav DESC, g.uses DESC, g.created_at DESC LIMIT ? OFFSET ?");
     let mut qq = sqlx::query_as::<_, (String, String, String, i64, String, bool, String, String, String, String, i64, Option<i64>, Option<i64>, bool, i64)>(&sql)
         .bind(&auth.id);

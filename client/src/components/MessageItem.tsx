@@ -11,6 +11,7 @@ import { EmojiPicker } from "./Pickers";
 import { addHighlight } from "../notes";
 import { Player } from "./Show";
 import { InviteCard } from "./Notifications";
+import { block, report, unblock, useBlocked } from "../safety";
 
 export const MessageItem = memo(function MessageItem({ msg, guildId, compact, readOnly }: { msg: Message; guildId: string | null; compact: boolean; readOnly?: boolean }) {
   const me = useStore((s) => s.me)!;
@@ -23,6 +24,8 @@ export const MessageItem = memo(function MessageItem({ msg, guildId, compact, re
   const mine = author.id === me.id;
   const canManage = can(guildId, P.MANAGE_MESSAGES);
   const replyAuthor = useStore((s) => (msg.reply_to?.author_id ? s.users[msg.reply_to.author_id] : undefined));
+  const blocked = useBlocked(author.id === me.id ? undefined : author.id);
+  const [showBlocked, setShowBlocked] = useState(false);
   const mentioned = msg.content.includes(`<@${me.id}>`) || /(^|\s)@(everyone|here)\b/.test(msg.content);
 
   const react = (emoji: string) => {
@@ -71,9 +74,29 @@ export const MessageItem = memo(function MessageItem({ msg, guildId, compact, re
       ...(gif ? [{ label: "Save GIF to library", onClick: () => openModal({ kind: "saveGif", ...gif }) }] : []),
       { label: "Copy Text", onClick: () => copy(msg.content) },
       { label: "Copy Message ID", onClick: () => copy(msg.id, "ID copied") },
+      ...(!mine && !author.is_bot && !msg.pending
+        ? [
+            { separator: true, label: "" },
+            { label: "Report Message", danger: true, onClick: () => report(author.id, msg.id) },
+            blocked
+              ? { label: `Unblock ${author.display_name}`, onClick: () => unblock(author.id, author.display_name) }
+              : { label: `Block ${author.display_name}`, danger: true, onClick: () => block(author.id, author.display_name) },
+          ]
+        : []),
       ...(mine || canManage ? [{ separator: true, label: "" }, { label: "Delete Message", danger: true, onClick: del }] : []),
     ]);
   };
+
+  // someone you blocked: their messages fold away (tap to see one)
+  if (blocked && !showBlocked)
+    return (
+      <div id={"msg-" + msg.id} className="msg blocked-msg" onContextMenu={readOnly ? undefined : more}>
+        <span className="muted small">Blocked message</span>
+        <button className="btn link small" onClick={() => setShowBlocked(true)}>
+          Show
+        </button>
+      </div>
+    );
 
   const hideText = msg.embeds.length === 1 && (msg.embeds[0].type === "image" || msg.embeds[0].type === "gifv") && msg.content.trim() === msg.embeds[0].url;
 

@@ -10,6 +10,7 @@ pub mod greeting;
 pub mod jellyfin;
 pub mod watch;
 pub mod notifications;
+pub mod safety;
 pub mod notes;
 pub mod schedule;
 pub mod social;
@@ -230,6 +231,10 @@ pub fn router(state: Shared) -> Router<Shared> {
         .route("/api/guilds/{gid}/join-requests", get(discover::list_requests))
         .route("/api/guilds/{gid}/join-requests/{uid}/{what}", post(discover::decide))
         .route("/api/gateway", get(crate::gateway::upgrade))
+        .route("/api/blocks", get(safety::list_blocks))
+        .route("/api/blocks/{uid}", put(safety::block).delete(safety::unblock))
+        .route("/api/reports", get(safety::list_reports).post(safety::report))
+        .route("/api/reports/{id}/resolve", post(safety::resolve))
         .route("/api/bot", get(crate::bot::status))
         .route("/api/bot/dm", post(bot_dm))
         .route("/api/guilds/{gid}/bot", get(crate::bot::get_settings).patch(crate::bot::update_settings))

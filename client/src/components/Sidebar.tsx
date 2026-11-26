@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { block, report, unblock } from "../safety";
 import { listeningIn, useListen } from "../listen";
 import { useShows } from "../show";
 import { api } from "../api";
@@ -290,10 +291,6 @@ function BoardRows({ guildId }: { guildId: string }) {
       <div className={"channel sub" + (open && filter === "news" ? " active" : "")} onClick={() => openGuildView(guildId, "news")}>
         <span className="ellipsis">News</span>
       </div>
-      <div className="channel sub soon" title="Game nights and shows, with RSVPs and reminders (coming soon)">
-        <span className="ellipsis">Events</span>
-        <span className="soon-tag">soon</span>
-      </div>
     </div>
   );
 }
@@ -498,6 +495,14 @@ export function userMenu(e: React.MouseEvent, userId: string, guildId: string | 
           onConfirm: () => api(`/api/guilds/${guildId}/members/${userId}/messages`, { method: "DELETE" }).then((r) => toast(`Deleted ${r.deleted} messages`)),
         }),
     });
+  if (userId !== me.id && !user?.is_bot) {
+    const name = user?.display_name || "them";
+    items.push(
+      { separator: true, label: "" },
+      s.blocked.includes(userId) ? { label: `Unblock ${name}`, onClick: () => unblock(userId, name) } : { label: `Block ${name}`, danger: true, onClick: () => block(userId, name) },
+      { label: `Report ${name}`, danger: true, onClick: () => report(userId) },
+    );
+  }
   items.push({ separator: true, label: "" }, { label: "Copy User ID", onClick: () => copy(userId, "ID copied") });
   openMenu(e, items);
 }
@@ -548,13 +553,6 @@ function HomeSidebar() {
   const filter = useStore((s) => (s.homePage === "board" ? s.boardFilter["@home"] ?? "all" : null));
   const unread = useStore((s) => notesForMe(s).filter((n) => !n.read).length);
   const notices = useUnreadNotices();
-  const soon = (emoji: string, label: string, what: string) => (
-    <div className="channel soon" title={what + " (coming soon)"}>
-      <span className="channel-emoji">{emoji}</span>
-      <span className="ellipsis">{label}</span>
-      <span className="soon-tag">soon</span>
-    </div>
-  );
   return (
     <>
       <div className="sidebar-header static">Home</div>
@@ -578,25 +576,16 @@ function HomeSidebar() {
             <span className="ellipsis">Notifications</span>
             {notices > 0 && <span className="badge inline">{notices}</span>}
           </div>
-          <div className="channel sub soon" title="Game nights and shows, with RSVPs and reminders (coming soon)">
-            <span className="ellipsis">Events</span>
-            <span className="soon-tag">soon</span>
-          </div>
         </div>
         <div className="sidebar-sep" />
         <div className={"channel" + (page === "profile" ? " active" : "")} onClick={() => openMyProfile()} title="How others see you: picture, name, about me, banner">
           <span className="channel-emoji">🪪</span>
           <span className="ellipsis">My profile</span>
         </div>
-        <div className={"channel" + (page === "library" ? " active" : "")} onClick={() => openLibrary()} title="Your recordings (your files and post history come later)">
+        <div className={"channel" + (page === "library" ? " active" : "")} onClick={() => openLibrary()} title="Your recordings">
           <span className="channel-emoji">📚</span>
           <span className="ellipsis">My Media</span>
         </div>
-        {soon("🎮", "Games", "Your games, who's playing, start one with friends")}
-        {soon("🧩", "Apps", "Soundboard packs, GIF packs, board themes, bots")}
-        {soon("🛍️", "Store", "The Llamble store")}
-        <div className="sidebar-sep" />
-        {soon("🛟", "Help Desk", "Report a problem or ask for help")}
       </div>
     </>
   );

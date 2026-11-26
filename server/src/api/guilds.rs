@@ -444,7 +444,7 @@ pub async fn update_member(State(state): State<Shared>, auth: AuthUser, Path((gi
     Ok(Json(m))
 }
 
-async fn remove_member_inner(state: &Shared, gid: &str, uid: &str) -> ApiResult<()> {
+pub(crate) async fn remove_member_inner(state: &Shared, gid: &str, uid: &str) -> ApiResult<()> {
     let members = crate::state::guild_member_ids(&state.db, gid).await;
     sqlx::query("DELETE FROM members WHERE guild_id = ? AND user_id = ?").bind(gid).bind(uid).execute(&state.db).await?;
     state.hub.send_users(&members, "GUILD_MEMBER_REMOVE", &json!({ "guild_id": gid, "user_id": uid }));
