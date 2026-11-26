@@ -270,7 +270,7 @@ TEMPLATE = """<!doctype html>
 <div class="wrap">
   <footer>
     <span>Llamble · free to self-host · <a href="https://github.com/eEPlanet/Llamble">github.com/eEPlanet/Llamble</a></span>
-    <span><a href="https://github.com/eEPlanet/Llamble/issues">Report a problem</a></span>
+    <span><a href="privacy.html">Privacy</a> · <a href="https://github.com/eEPlanet/Llamble/issues">Report a problem</a></span>
   </footer>
 </div>
 <script>
