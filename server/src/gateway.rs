@@ -368,7 +368,7 @@ async fn session(state: Shared, auth: AuthUser, sock: WebSocket, quiet: bool) {
                                 let ok = match &cid {
                                     Some(c) => match crate::models::load_channel(&state.db, c).await {
                                         // chat spaces, and rooms (voice, Watch) whose chat you can be in without talking
-                                        Ok(ch) => ch.guild_id.is_some() && ["text", "voice", "watch"].contains(&ch.kind.as_str()) && crate::perms::require_channel(&state.db, &ch, &auth.id, crate::perms::VIEW).await.is_ok(),
+                                        Ok(ch) => ch.guild_id.is_some() && ["text", "voice", "watch", "forum"].contains(&ch.kind.as_str()) && crate::perms::require_channel(&state.db, &ch, &auth.id, crate::perms::VIEW).await.is_ok(),
                                         Err(_) => false,
                                     },
                                     None => true,

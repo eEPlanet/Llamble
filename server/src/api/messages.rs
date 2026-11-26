@@ -62,7 +62,7 @@ pub struct AttachRef {
     pub spoiler: bool,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 pub struct CreateMsg {
     #[serde(default)]
     pub content: String,
@@ -78,6 +78,13 @@ pub struct CreateMsg {
     /// attachments may be re-posted by someone who can see it
     #[serde(skip)]
     pub shared_from: Option<String>,
+    /// forum spaces: a new post's title and tags; a reply's post (thread_id) and quotes
+    pub title: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    pub thread_id: Option<String>,
+    #[serde(default)]
+    pub quotes: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -175,6 +182,16 @@ pub async fn create_message(State(state): State<Shared>, auth: AuthUser, Path(ci
         }
         None => None,
     };
+    // forum spaces: every message is a post or a reply in one
+    let forum = if ch.kind == "forum" {
+        if req.voice.is_some() {
+            return Err(AppError::bad("voice messages aren't for forums"));
+        }
+        let f = crate::api::forum::ForumIn { title: req.title.clone(), tags: req.tags.clone(), thread_id: req.thread_id.clone(), quotes: req.quotes.clone() };
+        Some(crate::api::forum::check(&state, &ch, f, &reply_to).await?)
+    } else {
+        None
+    };
     let id = new_id();
     let mut tx = state.db.begin().await?;
     sqlx::query("INSERT INTO messages (id, channel_id, author_id, content, reply_to, created_at) VALUES (?,?,?,?,?,?)")
@@ -193,10 +210,16 @@ pub async fn create_message(State(state): State<Shared>, auth: AuthUser, Path(ci
             .bind(&id).bind(v.duration_ms.clamp(0, 15 * 60_000)).bind(v.urgent).bind(if can_transcribe { "pending" } else { "none" }).bind(v.voicemail).bind(about)
             .execute(&mut *tx).await?;
     }
+    if let Some(f) = &forum {
+        crate::api::forum::store(&mut tx, &id, &cid, f).await?;
+    }
     tx.commit().await?;
 
     let msg = load_message(&state.db, &id).await?;
     let mut payload = serde_json::to_value(&msg).unwrap();
+    if forum.is_some() {
+        payload["forum"] = crate::api::forum::parts(&state, &id).await.unwrap_or(json!({}));
+    }
     if let Some(n) = req.nonce {
         payload["nonce"] = json!(n);
     }
@@ -216,6 +239,9 @@ pub async fn create_message(State(state): State<Shared>, auth: AuthUser, Path(ci
             None => None,
         };
         crate::api::notifications::message_mentions(&state, &ch, &payload, &auth.id, reply_author.as_deref()).await;
+        if let Some(f) = &forum {
+            crate::api::forum::created(&state, &ch, &id, &auth.id, f, reply_author.as_deref(), &content).await;
+        }
     }
     if let Some(v) = &req.voice {
         if v.urgent {
@@ -274,7 +300,7 @@ pub async fn share_message(State(state): State<Shared>, auth: AuthUser, Path(mid
         auth,
         Path(req.channel_id),
         headers,
-        Json(CreateMsg { content, reply_to: None, attachments, nonce: None, effect: None, shared_from: Some(mid), voice: None }),
+        Json(CreateMsg { content, reply_to: None, attachments, nonce: None, effect: None, shared_from: Some(mid), voice: None, ..Default::default() }),
     )
     .await
 }
@@ -320,6 +346,7 @@ pub async fn delete_message(State(state): State<Shared>, auth: AuthUser, Path(mi
     kid_may_delete(&state, &auth).await?;
     crate::api::highlights::forget(&state, "message_id", &mid).await;
     crate::api::notifications::forget_message(&state, &mid).await;
+    crate::api::forum::delete_thread(&state, &mid).await;
     sqlx::query("DELETE FROM messages WHERE id = ?").bind(&mid).execute(&state.db).await?;
     state.emit_channel(&ch, "MESSAGE_DELETE", &json!({ "id": mid, "channel_id": ch.id })).await;
     Ok(Json(json!({ "ok": true })))
@@ -330,6 +357,7 @@ pub async fn remove_message(state: &Shared, mid: &str) {
     let Ok((_, ch)) = get_msg_and_channel(state, mid).await else { return };
     crate::api::highlights::forget(state, "message_id", mid).await;
     crate::api::notifications::forget_message(state, mid).await;
+    crate::api::forum::delete_thread(state, mid).await;
     let _ = sqlx::query("DELETE FROM messages WHERE id = ?").bind(mid).execute(&state.db).await;
     state.emit_channel(&ch, "MESSAGE_DELETE", &json!({ "id": mid, "channel_id": ch.id })).await;
 }

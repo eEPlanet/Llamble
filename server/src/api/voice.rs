@@ -271,7 +271,7 @@ async fn end_ring(state: &Shared, cid: &str, reason: &str) {
 /// "📞 Missed call" in the chat, from the caller, so the other person sees it later.
 async fn missed_call_note(state: &Shared, cid: &str, from: &str) {
     let who = AuthUser { id: from.to_string(), is_admin: false, is_master: false, is_kid: false, token_hash: String::new() };
-    let req = crate::api::messages::CreateMsg { content: "📞 Missed call".into(), reply_to: None, attachments: vec![], nonce: None, effect: None, shared_from: None, voice: None };
+    let req = crate::api::messages::CreateMsg { content: "📞 Missed call".into(), reply_to: None, attachments: vec![], nonce: None, effect: None, shared_from: None, voice: None, ..Default::default() };
     let _ = crate::api::messages::create_message(State(state.clone()), who, Path(cid.to_string()), axum::http::HeaderMap::new(), Json(req)).await;
 }
 

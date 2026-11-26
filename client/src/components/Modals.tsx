@@ -180,7 +180,7 @@ function JoinInvite({ code: initial }: { code?: string }) {
 }
 
 function CreateChannel({ guildId, parentId, kind: initialKind }: { guildId: string; parentId: string | null; kind?: "text" | "voice" | "category" }) {
-  const [kind, setKind] = useState<"text" | "voice" | "watch" | "category">(initialKind || "text");
+  const [kind, setKind] = useState<"text" | "voice" | "watch" | "forum" | "category">(initialKind || "text");
   const watchOn = useStore((s) => s.config.watch?.on ?? false);
   const [name, setName] = useState("");
   // it lands under its type (Chat, Voice & Video, Watch), or in the group it was added from
@@ -188,7 +188,7 @@ function CreateChannel({ guildId, parentId, kind: initialKind }: { guildId: stri
   const pickKind = (k: typeof kind) => setKind(k);
   const { busy, error, run } = useSubmit(async () => {
     const ch = await api(`/api/guilds/${guildId}/channels`, { body: { name, kind, parent_id: kind === "category" ? null : parentId } });
-    if (ch.kind === "text") selectChannel(guildId, ch.id);
+    if (ch.kind === "text" || ch.kind === "forum") selectChannel(guildId, ch.id);
   });
   return (
     <form className="modal" onSubmit={run}>
@@ -196,13 +196,13 @@ function CreateChannel({ guildId, parentId, kind: initialKind }: { guildId: stri
       {kind === "category" && <p className="muted small">A group holds any spaces you move into it (drag them, or right-click → Move to…). Spaces outside groups stay under their type.</p>}
       {kind !== "category" && (
         <div className="kind-pick">
-          {((watchOn ? ["text", "voice", "watch"] : ["text", "voice"]) as ("text" | "voice" | "watch")[]).map((k) => (
+          {((watchOn ? ["text", "voice", "watch", "forum"] : ["text", "voice", "forum"]) as ("text" | "voice" | "watch" | "forum")[]).map((k) => (
             <label key={k} className={"kind-opt" + (kind === k ? " on" : "")}>
               <input type="radio" checked={kind === k} onChange={() => pickKind(k)} />
-              <span className="kind-emoji">{k === "watch" ? "🍿" : k === "voice" ? "🔊" : "💬"}</span>
+              <span className="kind-emoji">{k === "watch" ? "🍿" : k === "voice" ? "🔊" : k === "forum" ? "🗂️" : "💬"}</span>
               <div>
-                <b>{k === "text" ? "Chat" : k === "voice" ? "Voice & Video" : "Watch Party"}</b>
-                <div className="muted small">{k === "text" ? "Messages, images, GIFs, files" : k === "voice" ? "Talk, video, and screen share" : "Watch together: a shared player and queue, with voice and chat"}</div>
+                <b>{k === "text" ? "Chat" : k === "voice" ? "Voice & Video" : k === "forum" ? "Forum" : "Watch Party"}</b>
+                <div className="muted small">{k === "text" ? "Messages, images, GIFs, files" : k === "voice" ? "Talk, video, and screen share" : k === "forum" ? "Posts with titles and tags; replies that branch; best answers" : "Watch together: a shared player and queue, with voice and chat"}</div>
               </div>
             </label>
           ))}
@@ -210,7 +210,7 @@ function CreateChannel({ guildId, parentId, kind: initialKind }: { guildId: stri
       )}
       <label>
         Name
-        <input value={name} onChange={(e) => setName(kind === "text" ? e.target.value.toLowerCase().replace(/\s+/g, "-") : e.target.value)} autoFocus maxLength={100} placeholder={kind === "text" ? "new-chat" : kind === "voice" ? "Lounge" : kind === "watch" ? "Movie Night" : "Gaming"} />
+        <input value={name} onChange={(e) => setName(kind === "text" ? e.target.value.toLowerCase().replace(/\s+/g, "-") : e.target.value)} autoFocus maxLength={100} placeholder={kind === "text" ? "new-chat" : kind === "voice" ? "Lounge" : kind === "watch" ? "Movie Night" : kind === "forum" ? "Help and questions" : "Gaming"} />
       </label>
       {error && <div className="form-error">{error}</div>}
       <div className="modal-foot">

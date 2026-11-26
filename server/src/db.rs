@@ -228,6 +228,8 @@ async fn migrate(pool: &SqlitePool) -> anyhow::Result<()> {
     add_column(pool, "channels", "retention_days", "INTEGER").await?;
     // locked by staff on the fly: nobody new can come in (voice / watch rooms)
     add_column(pool, "channels", "locked", "INTEGER NOT NULL DEFAULT 0").await?;
+    // forum spaces: their card colors (JSON: base, branch)
+    add_column(pool, "channels", "style", "TEXT NOT NULL DEFAULT ''").await?;
     // "channels" became "spaces": the default groups get the new names (only if never renamed)
     sqlx::query("UPDATE channels SET name = 'Chat' WHERE kind = 'category' AND name = 'Text Channels'").execute(pool).await?;
     sqlx::query("UPDATE channels SET name = 'Voice & Video' WHERE kind = 'category' AND name = 'Voice Channels'").execute(pool).await?;

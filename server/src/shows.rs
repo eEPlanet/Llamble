@@ -593,7 +593,7 @@ pub async fn publish(State(state): State<Shared>, auth: AuthUser, Path(id): Path
         auth.clone(),
         Path(req.channel_id.clone()),
         headers,
-        Json(crate::api::messages::CreateMsg { content, reply_to: None, attachments: vec![], nonce: None, effect: None, shared_from: None, voice: None }),
+        Json(crate::api::messages::CreateMsg { content, reply_to: None, attachments: vec![], nonce: None, effect: None, shared_from: None, voice: None, ..Default::default() }),
     )
     .await?;
     let mid = msg["id"].as_str().unwrap_or_default().to_string();

@@ -122,7 +122,7 @@ export interface Role {
   deny?: number;
 }
 
-export type ChannelKind = "text" | "voice" | "category" | "dm" | "party" | "watch";
+export type ChannelKind = "text" | "voice" | "category" | "dm" | "party" | "watch" | "forum";
 
 export interface Channel {
   id: string;
@@ -144,6 +144,8 @@ export interface Channel {
   locked?: boolean;
   /** parties: who made it (can rename it, remove people, delete it) */
   owner_id?: string | null;
+  /** forum spaces: card colors as JSON {base, branch} ("" = defaults) */
+  style?: string;
 }
 
 export interface Member {

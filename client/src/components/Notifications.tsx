@@ -1,5 +1,6 @@
 // The Notifications desk (Home), its section on the Home board, and the invite card that
 // shows in chats.
+import { goToForumPost } from "../forumnav";
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { clearNotice, markRead, openCardChat, useNotices, type Notice } from "../notifications";
@@ -69,6 +70,12 @@ function describe(n: Notice): { text: string; who?: any; guild?: any; open?: () 
         open: () => openMessage(d.kind === "party" ? "@parties" : d.guild?.id, d.channel_id, d.message_id),
       };
     }
+    case "forum_reply":
+      return {
+        text: `${nameOf(d.from)} replied in “${d.title}”${d.guild?.name ? ` (${d.guild.name})` : ""}${d.preview ? `: ${d.preview}` : ""}`,
+        who: d.from,
+        open: () => goToForumPost(d.channel_id, d.post_id, d.message_id),
+      };
     case "report":
       return {
         text: `${nameOf(d.about)} was reported (${reasonLabel(d.reason).toLowerCase()})${d.guild?.name ? ` in ${d.guild.name}` : ""}${d.preview ? `: “${d.preview}”` : ""}`,

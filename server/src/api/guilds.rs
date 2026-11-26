@@ -239,8 +239,8 @@ pub fn clean_channel_name(kind: &str, name: &str) -> String {
 
 pub async fn create_channel(State(state): State<Shared>, auth: AuthUser, Path(gid): Path<String>, Json(req): Json<CreateChannel>) -> ApiResult<Json<Channel>> {
     require_guild(&state.db, &gid, &auth.id, perms::MANAGE_CHANNELS).await?;
-    if !["text", "voice", "category", "watch"].contains(&req.kind.as_str()) {
-        return Err(AppError::bad("kind must be text, voice, watch or category"));
+    if !["text", "voice", "category", "watch", "forum"].contains(&req.kind.as_str()) {
+        return Err(AppError::bad("kind must be text, voice, watch, forum or category"));
     }
     if req.kind == "watch" && !state.s().watch_party {
         return Err(AppError::forbidden_msg("Watch Party is turned off on this Llamble"));
@@ -280,6 +280,8 @@ pub struct UpdateChannel {
     /// move it into a new category with this name (made first)
     #[serde(default)]
     pub new_category: Option<String>,
+    /// forum spaces: card colors {base, branch}
+    pub style: Option<serde_json::Value>,
 }
 
 pub async fn update_channel(State(state): State<Shared>, auth: AuthUser, Path(cid): Path<String>, Json(req): Json<UpdateChannel>) -> ApiResult<Json<Channel>> {
@@ -291,6 +293,9 @@ pub async fn update_channel(State(state): State<Shared>, auth: AuthUser, Path(ci
         if !n.is_empty() {
             sqlx::query("UPDATE channels SET name = ? WHERE id = ?").bind(n).bind(&cid).execute(&state.db).await?;
         }
+    }
+    if let (Some(st), "forum") = (&req.style, ch.kind.as_str()) {
+        sqlx::query("UPDATE channels SET style = ? WHERE id = ?").bind(crate::api::forum::clean_style(st).to_string()).bind(&cid).execute(&state.db).await?;
     }
     if let Some(t) = req.topic {
         sqlx::query("UPDATE channels SET topic = ? WHERE id = ?").bind(t.chars().take(1024).collect::<String>()).bind(&cid).execute(&state.db).await?;

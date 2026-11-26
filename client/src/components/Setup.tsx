@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { openModal } from "../ui";
 import { api, setSession } from "../api";
 import { useStore } from "../store";
@@ -19,6 +19,18 @@ export function Setup({ server, onDone, onCancel }: { server: string; onDone: (t
   const [guildId, setGuildId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // setup is only open for a few minutes after the server starts (so nobody can take over a
+  // forgotten install); this counts down, and says what to do once it has closed
+  const [closesAt, setClosesAt] = useState<number | null>(null);
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    api("/api/info", { server, token: null })
+      .then((i) => typeof i.setup_left_s === "number" && setClosesAt(Date.now() + i.setup_left_s * 1000))
+      .catch(() => {});
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [server]);
+  const left = closesAt === null ? null : Math.max(0, Math.round((closesAt - now) / 1000));
 
   const create = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -69,6 +81,15 @@ export function Setup({ server, onDone, onCancel }: { server: string; onDone: (t
             This server has no accounts yet. The account you create here is the <b>owner/admin</b>.
           </p>
           <div className="muted small center">{server}</div>
+          {left === 0 ? (
+            <div className="form-error">
+              Setup closed for safety. Restart your Llamble server (the Restart button where you installed it), then come back and finish setup within 10 minutes.
+            </div>
+          ) : left !== null && left < 600 ? (
+            <div className="muted small center">
+              For safety, setup closes in {Math.floor(left / 60)}:{String(left % 60).padStart(2, "0")}. Restarting the server opens it again.
+            </div>
+          ) : null}
           <label>
             Username
             <input value={username} onChange={(e) => setUsername(e.target.value)} autoFocus autoComplete="username" />

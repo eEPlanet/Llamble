@@ -262,6 +262,7 @@ pub async fn resolve(State(state): State<Shared>, auth: AuthUser, Path(id): Path
             if let Ok(Some(cid)) = sqlx::query_scalar::<_, String>("SELECT channel_id FROM messages WHERE id = ?").bind(&mid).fetch_optional(&state.db).await {
                 crate::api::highlights::forget(&state, "message_id", &mid).await;
                 crate::api::notifications::forget_message(&state, &mid).await;
+                crate::api::forum::delete_thread(&state, &mid).await;
                 sqlx::query("DELETE FROM messages WHERE id = ?").bind(&mid).execute(&state.db).await?;
                 if let Ok(ch) = load_channel(&state.db, &cid).await {
                     state.emit_channel(&ch, "MESSAGE_DELETE", &json!({ "id": mid, "channel_id": ch.id })).await;

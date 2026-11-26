@@ -1,4 +1,5 @@
 import { RecordingBar } from "./RecordingBar";
+import { ForumView } from "./ForumView";
 import { refreshVoicemailCount, UrgentAlert, useVoicemailCount, VoicemailPage } from "./VoiceMessage";
 import { CallScreens, CallStrip } from "./Calls";
 import { useEffect, useState } from "react";
@@ -161,6 +162,8 @@ export function Shell() {
               <WatchView key={channel.id} channel={channel} />
             ) : channel.kind === "party" ? (
               <PartyView channel={channel} />
+            ) : channel.kind === "forum" ? (
+              <ForumView key={channel.id} channel={channel} />
             ) : (
               <ChatView key={channel.id} channel={channel} />
             )

@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { goToForumPost } from "./forumnav";
 import { memberName, useStore } from "./store";
 
 type Rule = { re: RegExp; render: (m: RegExpExecArray, key: string, ctx: Ctx) => React.ReactNode };
@@ -44,6 +45,15 @@ const rules: Rule[] = [
       const href = safeHref(m[2]);
       return href ? <a key={k} href={href} target="_blank" rel="noreferrer" title={href}>{m[1]}</a> : m[0];
     },
+  },
+  {
+    // a link to a forum post (Copy link in a forum): opens the post in the app
+    re: /llamble:\/\/forum\/([0-9a-z]{26})\/([0-9a-z]{26})(?:\/([0-9a-z]{26}))?/i,
+    render: (m, k) => (
+      <span key={k} className="md-forum-link" onClick={() => goToForumPost(m[1], m[2], m[3])}>
+        🗂️ forum post
+      </span>
+    ),
   },
   {
     // "Http://" too (phone keyboards capitalize the first word)

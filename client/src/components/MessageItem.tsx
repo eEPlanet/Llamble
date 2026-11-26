@@ -307,7 +307,7 @@ function fit(w: number | null | undefined, h: number | null | undefined, maxW = 
   return { width: Math.round(w * s), height: "auto", aspectRatio: `${w} / ${h}` };
 }
 
-function Attachments({ files }: { files: FileObj[] }) {
+export function Attachments({ files }: { files: FileObj[] }) {
   const images = files.filter((f) => f.mime.startsWith("image/") && f.mime !== "image/svg+xml");
   const others = files.filter((f) => !images.includes(f));
   return (
@@ -387,7 +387,7 @@ function ShowEmbed({ e }: { e: Embed }) {
   );
 }
 
-function EmbedView({ e }: { e: Embed }) {
+export function EmbedView({ e }: { e: Embed }) {
   const [playing, setPlaying] = useState(false);
   if (e.type === "show") return <ShowEmbed e={e} />;
   if (e.type === "invite" && e.card_id) return <InviteCard cardId={e.card_id} guild={e.guild} />;

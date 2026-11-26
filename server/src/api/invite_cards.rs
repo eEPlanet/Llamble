@@ -161,8 +161,7 @@ async fn post_card(state: &Shared, auth: &AuthUser, headers: HeaderMap, channel_
             nonce: None,
             effect: None,
             shared_from: None,
-            voice: None,
-        }),
+            voice: None, ..Default::default() }),
     )
     .await?;
     let mid = msg["id"].as_str().unwrap_or_default().to_string();

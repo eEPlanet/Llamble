@@ -11,6 +11,7 @@ pub mod jellyfin;
 pub mod watch;
 pub mod notifications;
 pub mod safety;
+pub mod forum;
 pub mod notes;
 pub mod schedule;
 pub mod social;
@@ -28,7 +29,24 @@ use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+/// When this server started. Setup (making the master admin) is only open for a few minutes
+/// after a start, so a fresh install nobody set up can't be taken over later by a stranger.
+/// Restarting the server opens it again.
+static STARTED: once_cell::sync::Lazy<std::time::Instant> = once_cell::sync::Lazy::new(std::time::Instant::now);
+
+/// How long setup stays open after a start (LLAMBLE_SETUP_MINUTES, default 10).
+fn setup_window() -> std::time::Duration {
+    let m: u64 = std::env::var("LLAMBLE_SETUP_MINUTES").ok().and_then(|v| v.parse().ok()).unwrap_or(10);
+    std::time::Duration::from_secs(m * 60)
+}
+
+/// Seconds left before setup closes (0 once it has).
+fn setup_left_s() -> u64 {
+    setup_window().saturating_sub(STARTED.elapsed()).as_secs()
+}
+
 pub fn router(state: Shared) -> Router<Shared> {
+    once_cell::sync::Lazy::force(&STARTED);
     let _ = &state;
     // per-file size is enforced in files.rs from Server Settings; this is only a hard ceiling
     let upload_limit: usize = crate::api::files::ADMIN_MAX_UPLOAD as usize;
@@ -231,6 +249,10 @@ pub fn router(state: Shared) -> Router<Shared> {
         .route("/api/guilds/{gid}/join-requests", get(discover::list_requests))
         .route("/api/guilds/{gid}/join-requests/{uid}/{what}", post(discover::decide))
         .route("/api/gateway", get(crate::gateway::upgrade))
+        .route("/api/channels/{cid}/forum", get(forum::list))
+        .route("/api/channels/{cid}/forum/{pid}", get(forum::thread))
+        .route("/api/forum/{pid}/follow", put(forum::follow).delete(forum::unfollow))
+        .route("/api/forum/{pid}/best", put(forum::best))
         .route("/api/blocks", get(safety::list_blocks))
         .route("/api/blocks/{uid}", put(safety::block).delete(safety::unblock))
         .route("/api/reports", get(safety::list_reports).post(safety::report))
@@ -264,6 +286,9 @@ async fn setup(State(state): State<Shared>, Json(req): Json<SetupReq>) -> ApiRes
     let _g = LOCK.lock().await;
     if !setup_required(&state).await {
         return Err(AppError::conflict("setup is already complete — sign in instead"));
+    }
+    if setup_left_s() == 0 {
+        return Err(AppError::forbidden_msg(format!("Setup closed for safety. Restart your Llamble server, then finish setup within {} minutes.", setup_window().as_secs() / 60)));
     }
     let username = req.username.trim().to_string();
     if !auth::valid_username(&username) {
@@ -312,6 +337,8 @@ async fn invite_redirect(Path(code): Path<String>) -> axum::response::Redirect {
 async fn info(State(state): State<Shared>) -> Json<Value> {
     Json(json!({
         "setup_required": setup_required(&state).await,
+        // seconds before setup closes (it reopens when the server restarts)
+        "setup_left_s": setup_left_s(),
         "name": "Llamble",
         "version": env!("CARGO_PKG_VERSION"),
         "voice_enabled": crate::voice_server::enabled(&state),

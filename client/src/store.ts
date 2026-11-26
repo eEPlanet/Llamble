@@ -44,6 +44,8 @@ interface State {
   activityHidden: Record<string, boolean>;
   /** people I blocked (their messages fold away; they can't DM, ring or friend me) */
   blocked: string[];
+  /** forum spaces: bumped whenever something in one changes (so its view refetches) */
+  forumTick: Record<string, number>;
   /** who is reading each chat right now (people hiding what they do are left out) */
   viewers: Record<string, string[]>;
   /** my own status and "hide what I'm doing", saved on my account */
@@ -97,6 +99,7 @@ export const useStore = create<State>(() => ({
   games: {},
   activityHidden: {},
   blocked: [],
+  forumTick: {},
   viewers: {},
   myStatus: { status: "online", hide_activity: false },
   voiceStates: {},
@@ -349,6 +352,11 @@ export function onEvent(l: Listener) {
 // ---------- gateway events ----------
 
 export function handleEvent(t: string, d: any) {
+  // forum spaces refetch what they show when anything in them changes
+  if (d && typeof d === "object" && (t.startsWith("MESSAGE_") || t.startsWith("REACTION_") || t === "FORUM_BEST")) {
+    const fc = d.channel_id && get().channels[d.channel_id];
+    if (fc && fc.kind === "forum") set((s) => ({ forumTick: { ...s.forumTick, [fc.id]: (s.forumTick[fc.id] || 0) + 1 } }));
+  }
   const s = get();
   switch (t) {
     case "READY": {

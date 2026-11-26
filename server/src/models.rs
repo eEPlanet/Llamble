@@ -76,6 +76,9 @@ pub struct Channel {
     /// staff locked it: nobody new can come in
     #[sqlx(default)]
     pub locked: bool,
+    /// forum spaces: card colors as JSON {base, branch} ("" = the defaults)
+    #[sqlx(default)]
+    pub style: String,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -427,7 +430,7 @@ pub async fn load_member(pool: &SqlitePool, guild_id: &str, user_id: &str) -> sq
     })
 }
 
-pub const CHANNEL_COLS: &str = "c.id, c.guild_id, c.kind, c.name, c.topic, c.parent_id, c.position, c.created_at, c.retention_days, c.locked,
+pub const CHANNEL_COLS: &str = "c.id, c.guild_id, c.kind, c.name, c.topic, c.parent_id, c.position, c.created_at, c.retention_days, c.locked, c.style,
     (SELECT MAX(m.id) FROM messages m WHERE m.channel_id = c.id) AS last_message_id,
     (SELECT MAX(m.id) FROM messages m WHERE m.channel_id = c.id AND NOT EXISTS (SELECT 1 FROM voice_notes v WHERE v.message_id = m.id AND v.voicemail = 1)) AS last_alert_id";
 
