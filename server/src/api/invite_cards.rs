@@ -72,6 +72,10 @@ async fn connected(state: &Shared, me: &str, other: &str) -> bool {
 /// May `me` invite `other` (to anything)? Kids: only their own parents. Others: per the
 /// instance's search setting.
 async fn may_invite(state: &Shared, me: &str, other: &str) -> bool {
+    // the demo sandbox and everyone else never meet
+    if crate::demo::apart(state, me, other) {
+        return false;
+    }
     if me == other {
         return false;
     }

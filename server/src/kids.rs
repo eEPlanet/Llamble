@@ -367,7 +367,8 @@ pub struct Who {
 }
 
 async fn find_user(state: &Shared, who: &str) -> ApiResult<String> {
-    let id: Option<String> = sqlx::query_scalar("SELECT id FROM users WHERE (id = ? OR username = ?) AND is_bot = 0")
+    // (never anyone in the demo sandbox)
+    let id: Option<String> = sqlx::query_scalar("SELECT id FROM users WHERE (id = ? OR username = ?) AND is_bot = 0 AND demo = 0")
         .bind(who.trim())
         .bind(who.trim().trim_start_matches('@'))
         .fetch_optional(&state.db)

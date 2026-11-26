@@ -401,6 +401,10 @@ pub struct UpdateMe {
 }
 
 pub async fn update_me(State(state): State<Shared>, auth: AuthUser, Json(req): Json<UpdateMe>) -> ApiResult<Json<UserPublic>> {
+    // the demo account's sign-in has to keep working for the next reviewer
+    if crate::demo::is_demo(&auth.id) && (req.new_password.is_some() || req.email.is_some()) {
+        return Err(AppError::forbidden_msg("the demo account's password and email can't be changed"));
+    }
     if let Some(e) = &req.email {
         let e = e.trim();
         if !e.is_empty() && (!e.contains('@') || e.len() > 200 || e.contains(char::is_whitespace)) {

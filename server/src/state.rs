@@ -326,7 +326,14 @@ impl FromRequestParts<Shared> for AuthUser {
     type Rejection = AppError;
     async fn from_request_parts(parts: &mut Parts, state: &Shared) -> Result<Self, Self::Rejection> {
         let token = token_from_parts(parts).ok_or_else(AppError::unauthorized)?;
-        auth_token(state, &token).await
+        let u = auth_token(state, &token).await?;
+        // the demo account (app store reviewers) is sealed off from the rest of the instance
+        if crate::demo::is_demo(&u.id) {
+            if let Some(why) = crate::demo::blocked(&parts.method, parts.uri.path()) {
+                return Err(AppError::forbidden_msg(why));
+            }
+        }
+        Ok(u)
     }
 }
 

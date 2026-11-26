@@ -24,6 +24,10 @@ pub async fn guild_payload(state: &Shared, guild_id: &str) -> ApiResult<Value> {
 }
 
 pub async fn add_member(state: &Shared, guild_id: &str, user_id: &str) -> ApiResult<()> {
+    let owner: Option<String> = sqlx::query_scalar("SELECT owner_id FROM guilds WHERE id = ?").bind(guild_id).fetch_optional(&state.db).await?;
+    if owner.map(|o| crate::demo::apart(state, &o, user_id)).unwrap_or(false) {
+        return Err(AppError::forbidden());
+    }
     let banned: Option<i64> = sqlx::query_scalar("SELECT 1 FROM bans WHERE guild_id = ? AND user_id = ?")
         .bind(guild_id)
         .bind(user_id)

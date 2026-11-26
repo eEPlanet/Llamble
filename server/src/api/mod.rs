@@ -135,6 +135,8 @@ pub fn router(state: Shared) -> Router<Shared> {
         .route("/api/gifs/{id}", patch(gifs::edit).delete(gifs::remove))
         .route("/api/gifs/{id}/favorite", put(gifs::favorite).delete(gifs::unfavorite))
         .route("/api/admin/users", get(admin_users))
+        .route("/api/admin/demo", get(crate::demo::get).put(crate::demo::set))
+        .route("/api/admin/demo/reset", post(crate::demo::reset))
         .route("/api/admin/users/{uid}", delete(admin_delete_user))
         .route("/api/admin/users/{uid}/reset-password", post(admin_reset_password))
         .route("/api/admin/users/{uid}/role", post(admin_set_role))

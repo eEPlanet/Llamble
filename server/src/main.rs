@@ -3,6 +3,7 @@ mod api;
 mod bot;
 mod config;
 mod db;
+mod demo;
 mod email;
 mod error;
 mod gateway;
@@ -106,6 +107,9 @@ async fn main() -> anyhow::Result<()> {
         sqlx::query("INSERT OR REPLACE INTO settings (key, value) VALUES ('presets_v1', '1')").execute(&state.db).await?;
     }
     bootstrap(&state).await?;
+    // the demo sandbox (app store reviewers): who is in it, and its nightly rebuild
+    demo::load(&state).await;
+    demo::spawn_nightly(state.clone());
     tokio::spawn(janitor(state.clone()));
     tokio::spawn(api::files::backfill_video_thumbs(state.clone()));
     tokio::spawn(ai::boot(state.clone()));

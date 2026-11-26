@@ -96,7 +96,8 @@ pub async fn add_friend(State(state): State<Shared>, auth: AuthUser, Json(req): 
         (None, Some(name)) => sqlx::query_scalar("SELECT id FROM users WHERE username = ? COLLATE NOCASE AND is_bot = 0").bind(name.trim().trim_start_matches('@')).fetch_optional(&state.db).await?,
         _ => None,
     };
-    let other = other.ok_or_else(|| AppError::bad("nobody on this Llamble has that username"))?;
+    // someone in the other world (the demo sandbox, or outside it) doesn't exist, as far as you can tell
+    let other = other.filter(|o| !crate::demo::apart(&state, &auth.id, o)).ok_or_else(|| AppError::bad("nobody on this Llamble has that username"))?;
     if other == auth.id {
         return Err(AppError::bad("you can't friend yourself"));
     }
@@ -212,6 +213,9 @@ async fn party(state: &Shared, auth: &AuthUser, id: &str) -> ApiResult<(crate::m
 /// Who may be in a party with whom: the same rule as a DM (friends, a shared server, family),
 /// and kids only with people a parent approved.
 async fn may_join(state: &Shared, adder: &AuthUser, who: &str, members: &[String]) -> ApiResult<()> {
+    if crate::demo::apart(state, &adder.id, who) {
+        return Err(AppError::forbidden_msg("you can only add your friends or people in your servers"));
+    }
     let shares: Option<i64> = sqlx::query_scalar("SELECT 1 FROM members a JOIN members b ON a.guild_id = b.guild_id WHERE a.user_id = ? AND b.user_id = ? LIMIT 1").bind(&adder.id).bind(who).fetch_optional(&state.db).await?;
     if shares.is_none() && !is_friend(state, &adder.id, who).await && !adder.is_admin && !crate::kids::is_guardian(state, &adder.id, who).await && !crate::kids::is_guardian(state, who, &adder.id).await {
         return Err(AppError::forbidden_msg("you can only add your friends or people in your servers"));
@@ -411,7 +415,10 @@ pub async fn delete_party(State(state): State<Shared>, auth: AuthUser, Path(id):
 }
 
 /// Someone's profile page: their card plus what they wrote about themselves.
-pub async fn get_profile(State(state): State<Shared>, _auth: AuthUser, Path(uid): Path<String>) -> ApiResult<Json<Value>> {
+pub async fn get_profile(State(state): State<Shared>, auth: AuthUser, Path(uid): Path<String>) -> ApiResult<Json<Value>> {
+    if crate::demo::apart(&state, &auth.id, &uid) {
+        return Err(AppError::not_found());
+    }
     let row: Option<(String, String, i64)> = sqlx::query_as("SELECT bio, banner, created_at FROM users WHERE id = ?").bind(&uid).fetch_optional(&state.db).await?;
     let (bio, banner, joined) = row.ok_or_else(AppError::not_found)?;
     Ok(Json(json!({ "user": get_user(&state.db, &uid).await?, "bio": bio, "banner": banner, "joined_at": joined })))

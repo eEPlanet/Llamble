@@ -212,6 +212,8 @@ async fn migrate(pool: &SqlitePool) -> anyhow::Result<()> {
     // "Hide what I'm doing": still shows online, but no game and not in anyone's Right now
     add_column(pool, "users", "hide_activity", "INTEGER NOT NULL DEFAULT 0").await?;
     add_column(pool, "users", "email", "TEXT").await?;
+    // the demo sandbox for app store reviewers (see demo.rs)
+    add_column(pool, "users", "demo", "INTEGER NOT NULL DEFAULT 0").await?;
     sqlx::query("UPDATE users SET instance_role = 'admin' WHERE is_admin = 1 AND instance_role = 'user' AND is_bot = 0").execute(pool).await?;
     let has_master: Option<i64> = sqlx::query_scalar("SELECT 1 FROM users WHERE instance_role = 'master'").fetch_optional(pool).await?;
     if has_master.is_none() {

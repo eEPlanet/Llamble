@@ -613,6 +613,7 @@ export function UserSettings({ tab: initial }: { tab?: string }) {
         // the Llamble server itself (the NAS): not the "servers" people chat in
         { id: "nas-section", label: "My Llamble Instance (NAS)", section: true, hidden: !me.is_admin },
         { id: "admin", label: "Accounts", hidden: !me.is_admin },
+        { id: "demo", label: "Demo account", hidden: !me.is_admin },
         { id: "server", label: "Settings & Updates", hidden: me.instance_role !== "master" },
         { id: "aimodel", label: "AI Model", hidden: me.instance_role !== "master" },
         { id: "remote", label: "Remote Access", hidden: me.instance_role !== "master" },
@@ -635,6 +636,7 @@ export function UserSettings({ tab: initial }: { tab?: string }) {
       {tab === "recordings" && <Recordings />}
       {tab === "sessions" && <Sessions />}
       {tab === "admin" && <Admin />}
+      {tab === "demo" && <DemoAccount />}
       {tab === "family" && <Family />}
       {tab === "remote" && <RemoteAccess />}
       {tab === "server" && <ServerConfig />}
@@ -1335,6 +1337,65 @@ function levelLabel(u: User) {
   if (u.instance_role === "admin" || u.is_admin) return <span className="role-chip has">admin</span>;
   if (u.is_kid) return <span className="role-chip kid">kid</span>;
   return null;
+}
+
+/** A sealed-off demo world on this instance, for app store reviewers (or showing Llamble to someone). */
+function DemoAccount() {
+  const [d, setD] = useState<any>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    api("/api/admin/demo").then(setD).catch(() => {});
+  }, []);
+  const run = async (f: () => Promise<any>) => {
+    setBusy(true);
+    try {
+      setD(await f());
+    } catch (e: any) {
+      toast(e?.message || "That didn't work");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const server = session.server || location.origin;
+  return (
+    <div>
+      <h2>Demo account</h2>
+      <p className="muted small">
+        A made-up server with made-up people, and one sign-in to give to app store reviewers. It's sealed off: the demo can't see, find or contact anyone else on this
+        Llamble, and nobody here can see it. Its content is put back the way it started every night; the sign-in stays the same.
+      </p>
+      {!d ? (
+        <p className="muted">Loading…</p>
+      ) : (
+        <>
+          <label className="toggle-row">
+            <input type="checkbox" checked={!!d.enabled} disabled={busy} onChange={(e) => run(() => api("/api/admin/demo", { method: "PUT", body: { enabled: e.target.checked } }))} />
+            <span>Demo account is {d.enabled ? "on" : "off"}</span>
+          </label>
+          {d.enabled && (
+            <div className="card" style={{ marginTop: 12, padding: 14 }}>
+              <div className="profile-section">Give reviewers</div>
+              <div className="small">
+                Server address: <code>{server}</code>
+              </div>
+              <div className="small">
+                Username: <code>{d.username}</code>
+              </div>
+              <div className="small">
+                Password: <code>{d.password}</code>
+              </div>
+              <p className="muted small" style={{ marginTop: 8 }}>
+                The server address has to be one reviewers can reach from the internet (Settings → Remote Access).
+              </p>
+              <button className="btn small" disabled={busy} onClick={() => run(() => api("/api/admin/demo/reset", { method: "POST" }))}>
+                Put the demo back the way it started now
+              </button>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
 }
 
 function Admin() {

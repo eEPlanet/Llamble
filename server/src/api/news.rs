@@ -266,9 +266,12 @@ pub struct ListQ {
 }
 
 /// GET /api/news?scope=instance
-pub async fn list_instance(State(state): State<Shared>, _auth: AuthUser, Query(q): Query<ListQ>) -> ApiResult<Json<Value>> {
+pub async fn list_instance(State(state): State<Shared>, auth: AuthUser, Query(q): Query<ListQ>) -> ApiResult<Json<Value>> {
     if q.scope.as_deref().unwrap_or("instance") != "instance" {
         return Err(AppError::bad("scope must be instance (server news: /api/guilds/{id}/news; Llamble news: /api/news/llamble)"));
+    }
+    if crate::demo::is_demo(&auth.id) {
+        return Ok(Json(json!([]))); // the demo sandbox doesn't get this instance's news
     }
     Ok(Json(json!(rows(&state, "scope = 'instance'", &[], 50).await?)))
 }
@@ -422,7 +425,8 @@ pub async fn delete(State(state): State<Shared>, auth: AuthUser, Path(id): Path<
 /// news on (latest 20), newest first.
 pub async fn for_home(state: &Shared, uid: &str) -> ApiResult<Vec<Value>> {
     let prefs = prefs_for(state, uid).await;
-    let mut out = rows(state, "scope = 'instance'", &[], 10).await?;
+    // the demo sandbox doesn't get this instance's news
+    let mut out = if crate::demo::is_demo(uid) { vec![] } else { rows(state, "scope = 'instance'", &[], 10).await? };
     let sql = format!(
         "SELECT {COLS} FROM news WHERE scope = 'guild'
            AND guild_id IN (SELECT guild_id FROM members WHERE user_id = ?1 UNION SELECT id FROM guilds WHERE owner_id = ?1)

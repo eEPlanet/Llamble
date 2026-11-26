@@ -60,7 +60,10 @@ async fn spoken(state: &Shared, owner: &str, text: &str, voice: i64) -> anyhow::
 
 /// GET /api/users/{uid}/greeting — what a caller plays before the tone.
 /// {kind, text, file_id}: play file_id if there is one, else say text on the device.
-pub async fn get_greeting(State(state): State<Shared>, _auth: AuthUser, Path(uid): Path<String>) -> ApiResult<Json<Value>> {
+pub async fn get_greeting(State(state): State<Shared>, auth: AuthUser, Path(uid): Path<String>) -> ApiResult<Json<Value>> {
+    if crate::demo::apart(&state, &auth.id, &uid) {
+        return Err(AppError::not_found());
+    }
     let row: Option<(String, String, String, Option<i64>, Option<String>)> = sqlx::query_as(
         "SELECT COALESCE(NULLIF(display_name, ''), username), vm_greeting, vm_greeting_text, vm_greeting_voice, vm_greeting_file FROM users WHERE id = ?",
     )

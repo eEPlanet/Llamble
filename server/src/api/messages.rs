@@ -430,6 +430,9 @@ pub async fn open_dm(State(state): State<Shared>, auth: AuthUser, Json(req): Jso
     if req.recipient_id == auth.id {
         return Err(AppError::bad("can't DM yourself"));
     }
+    if crate::demo::apart(&state, &auth.id, &req.recipient_id) {
+        return Err(AppError::forbidden());
+    }
     let shares: Option<i64> = sqlx::query_scalar(
         "SELECT 1 FROM members a JOIN members b ON a.guild_id = b.guild_id WHERE a.user_id = ? AND b.user_id = ? LIMIT 1",
     ).bind(&auth.id).bind(&req.recipient_id).fetch_optional(&state.db).await?;
