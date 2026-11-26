@@ -13,7 +13,8 @@ import { Avatar, BotTag, Icon } from "./common";
 import { ScreenPicker } from "./VoiceView";
 import { DiscoverModal } from "./Discover";
 import { ServerSettings, UserSettings } from "./Settings";
-import { block, report, unblock, useBlocked, REASONS } from "../safety";
+import { useBlocked, REASONS } from "../safety";
+import { SafetyLinks } from "./Safety";
 
 export function Modals() {
   const modals = useUI((s) => s.modals);
@@ -426,7 +427,6 @@ function Profile({ userId, guildId }: { userId: string; guildId: string | null }
   const game = useStore((s) => s.games[userId]);
   const manageRoles = guildId ? can(guildId, P.MANAGE_ROLES) : false;
   const prof = useProfile(user && !user.is_bot ? userId : null);
-  const blocked = useBlocked(userId);
   if (!user) return null;
   const toggleRole = (rid: string, has: boolean) =>
     api(`/api/guilds/${guildId}/members/${userId}/roles/${rid}`, { method: has ? "DELETE" : "PUT" }).catch((e) => toast(e.message, "error"));
@@ -502,22 +502,7 @@ function Profile({ userId, guildId }: { userId: string; guildId: string | null }
             )}
           </div>
         )}
-        {userId !== me.id && !user.is_bot && (
-          <div className="profile-safety">
-            {blocked ? (
-              <button className="btn link small" onClick={() => unblock(userId, user.display_name)}>
-                Unblock
-              </button>
-            ) : (
-              <button className="btn link small danger-text" onClick={() => (closeModal(), block(userId, user.display_name))}>
-                Block
-              </button>
-            )}
-            <button className="btn link small danger-text" onClick={() => (closeModal(), report(userId))}>
-              Report
-            </button>
-          </div>
-        )}
+        {userId !== me.id && !user.is_bot && <SafetyLinks userId={userId} name={user.display_name} before={closeModal} />}
       </div>
     </div>
   );

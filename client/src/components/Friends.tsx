@@ -25,6 +25,8 @@ import { ChatView } from "./ChatView";
 import { Avatar, Icon } from "./common";
 import { VoiceView } from "./VoiceView";
 import { ProfileCard, useProfile } from "./Profile";
+import { SafetyLinks } from "./Safety";
+import { block, report, unblock } from "../safety";
 
 const PARTY_MAX = 25;
 
@@ -287,6 +289,18 @@ const removeFriend = (f: Friend, what: string) =>
     .catch((e) => toast(e.message, "error"));
 
 function friendMenu(f: Friend) {
+  const name = f.user.display_name;
+  const safety = [
+    { separator: true, label: "" },
+    useStore.getState().blocked.includes(f.user.id)
+      ? { label: `Unblock ${name}`, onClick: () => unblock(f.user.id, name) }
+      : { label: `Block ${name}`, danger: true, onClick: () => block(f.user.id, name) },
+    { label: `Report ${name}`, danger: true, onClick: () => report(f.user.id) },
+  ];
+  return [...friendMenuMain(f), ...safety];
+}
+
+function friendMenuMain(f: Friend) {
   if (f.state === "incoming")
     return [
       { label: "Accept", onClick: () => accept(f) },
@@ -564,6 +578,7 @@ export function FriendProfile() {
           </button>
         </div>
       )}
+      <SafetyLinks userId={user.id} name={user.display_name} />
     </ProfileCard>
   );
 }

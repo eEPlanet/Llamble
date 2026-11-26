@@ -37,8 +37,13 @@ with sync_playwright() as p:
     # open the server chat
     pg.click(f".guild-btn[data-gid='{gid}']"); pg.wait_for_timeout(400)
     pg.locator(f"[data-cid='{general}']").first.click(); pg.wait_for_timeout(1200)
-    msg = pg.locator(f"#msg-{bad['id']}")
+    # hold / right-click the author's name: the person menu, with Report and Block
+    pg.locator(f"#msg-{bad['id']} .msg-author").click(button="right"); pg.wait_for_timeout(300)
+    assert pg.locator(".ctx-menu >> text=Report troll").count() and pg.locator(".ctx-menu >> text=Profile").count(), pg.locator(".ctx-menu").inner_text()
+    pg.keyboard.press("Escape"); pg.mouse.click(5, 5); pg.wait_for_timeout(200)
+    msg = pg.locator(f"#msg-{bad['id']} .msg-content")
     msg.click(button="right"); pg.wait_for_timeout(300)
+    assert pg.locator(".ctx-menu >> text=Report troll").count(), "message menu reports the person too"
     assert pg.locator(".ctx-menu >> text=Report Message").count() and pg.locator(".ctx-menu >> text=Block troll").count()
     pg.locator(".ctx-menu >> text=Report Message").click(); pg.wait_for_timeout(400)
     pg.locator(".modal >> text=Harassment or bullying").click()
@@ -59,6 +64,28 @@ with sync_playwright() as p:
     pg.screenshot(path=f"{OUT}/safety-blocked.png")
     pg.locator("button:has-text('Unblock')").first.click(); pg.wait_for_timeout(600)
     assert pg.locator("text=You haven't blocked anyone").count()
+
+    # a friend's page (and the DM header) can block and report too
+    tid = requests.get(B + "/api/users/@me", headers=H(T)).json()["id"]
+    kid_ = requests.get(B + "/api/users/@me", headers=H(K)).json()["id"]
+    ok(requests.post(f"{B}/api/friends", headers=H(T), json={"user_id": kid_})); ok(requests.put(f"{B}/api/friends/{tid}", headers=H(K)))
+    dm = ok(requests.post(f"{B}/api/users/@me/channels", headers=H(K), json={"recipient_id": tid}))["id"]
+    pg.keyboard.press("Escape"); pg.wait_for_timeout(300)
+    pg.goto(B + "/"); pg.wait_for_timeout(2500)
+    pg.locator("[data-tut='friends']").click(); pg.wait_for_timeout(500)
+    pg.locator(".dm-row:has-text('troll')").first.click(); pg.wait_for_timeout(600)
+    assert pg.locator(".profile-safety >> text=Block").count() and pg.locator(".profile-safety >> text=Report").count(), "friend page has Block and Report"
+    pg.screenshot(path=f"{OUT}/safety-friend-page.png")
+    pg.locator("[data-tut='talk']").click(); pg.wait_for_timeout(500)
+    pg.locator(f".dm-row[data-cid='{dm}']").click(); pg.wait_for_timeout(800)
+    pg.locator(".chat-header .chat-person").click(); pg.wait_for_timeout(500)
+    assert pg.locator(".modal.profile .profile-safety >> text=Report").count(), "DM header name opens the profile"
+    pg.keyboard.press("Escape"); pg.mouse.click(5, 5); pg.wait_for_timeout(300)
+    if pg.locator(".modal.profile").count(): pg.locator(".modal-backdrop, .modal-bg").first.click(position={"x": 5, "y": 5})
+    pg.locator(".chat-header .chat-person").click(button="right"); pg.wait_for_timeout(300)
+    assert pg.locator(".ctx-menu >> text=Block troll").count(), "DM header hold shows the person menu"
+    pg.screenshot(path=f"{OUT}/safety-dm-header.png")
+    print("message names, the message menu and the DM header all reach Report and Block")
 
     # the admin: a report notification, then Settings → Reports → Delete message
     pa = page(p, M)

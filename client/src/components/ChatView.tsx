@@ -7,6 +7,7 @@ import { openMenu, openModal, toast, useUI } from "../ui";
 import { Composer, type ComposerHandle } from "./Composer";
 import { Avatar, BotTag, Icon, formatDay } from "./common";
 import { MessageItem } from "./MessageItem";
+import { userMenu } from "./Sidebar";
 import { joinVoice, useVoice } from "../voice";
 import { hangUp, showCallScreen, startCall, urgentCall } from "../calls";
 import { CallTimer } from "./Calls";
@@ -52,8 +53,22 @@ export function ChatView({ channel }: { channel: Channel }) {
       }}
     >
       <header className="chat-header">
-        {channel.kind === "dm" ? <Avatar user={otherUser} size={24} status /> : party ? <Icon name="users" size={22} className="muted" /> : <span className="chat-head-emoji">💬</span>}
-        <span className="chat-title">{title}</span>
+        {channel.kind === "dm" && otherUser ? (
+          // tap their name for their profile; hold (right-click) for what you can do with them
+          <span
+            className="chat-person clickable"
+            onClick={() => openModal({ kind: "profile", userId: otherUser.id, guildId: null })}
+            onContextMenu={(e) => (e.preventDefault(), userMenu(e, otherUser.id, null))}
+          >
+            <Avatar user={otherUser} size={24} status />
+            <span className="chat-title">{title}</span>
+          </span>
+        ) : (
+          <>
+            {party ? <Icon name="users" size={22} className="muted" /> : <span className="chat-head-emoji">💬</span>}
+            <span className="chat-title">{title}</span>
+          </>
+        )}
         {channel.locked && <span className="muted small" title="Locked: only staff can come in">🔒 Locked</span>}
         {otherUser?.is_bot && <BotTag />}
         {channel.topic && <span className="chat-topic ellipsis">{channel.topic}</span>}

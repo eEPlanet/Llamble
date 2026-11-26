@@ -12,6 +12,7 @@ import { addHighlight } from "../notes";
 import { Player } from "./Show";
 import { InviteCard } from "./Notifications";
 import { block, report, unblock, useBlocked } from "../safety";
+import { userMenu } from "./Sidebar";
 
 export const MessageItem = memo(function MessageItem({ msg, guildId, compact, readOnly }: { msg: Message; guildId: string | null; compact: boolean; readOnly?: boolean }) {
   const me = useStore((s) => s.me)!;
@@ -53,6 +54,13 @@ export const MessageItem = memo(function MessageItem({ msg, guildId, compact, re
     return null;
   };
 
+  // press and hold (right-click) a name or picture: what you can do with that person
+  const personMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    userMenu(e, author.id, guildId);
+  };
+
   const more = (e: React.MouseEvent) => {
     const gif = gifSource();
     openMenu(e, [
@@ -78,6 +86,7 @@ export const MessageItem = memo(function MessageItem({ msg, guildId, compact, re
         ? [
             { separator: true, label: "" },
             { label: "Report Message", danger: true, onClick: () => report(author.id, msg.id) },
+            { label: `Report ${author.display_name}`, danger: true, onClick: () => report(author.id) },
             blocked
               ? { label: `Unblock ${author.display_name}`, onClick: () => unblock(author.id, author.display_name) }
               : { label: `Block ${author.display_name}`, danger: true, onClick: () => block(author.id, author.display_name) },
@@ -138,7 +147,7 @@ export const MessageItem = memo(function MessageItem({ msg, guildId, compact, re
           {compact ? (
             <span className="msg-hover-time">{new Date(msg.created_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
           ) : (
-            <div onClick={() => openModal({ kind: "profile", userId: author.id, guildId })} className="clickable">
+            <div onClick={() => openModal({ kind: "profile", userId: author.id, guildId })} onContextMenu={readOnly ? undefined : personMenu} className="clickable">
               <Avatar user={author} size={40} />
             </div>
           )}
@@ -146,7 +155,7 @@ export const MessageItem = memo(function MessageItem({ msg, guildId, compact, re
         <div className="msg-main">
           {!compact && (
             <div className="msg-head">
-              <span className="msg-author" style={{ color }} onClick={() => openModal({ kind: "profile", userId: author.id, guildId })}>
+              <span className="msg-author" style={{ color }} onClick={() => openModal({ kind: "profile", userId: author.id, guildId })} onContextMenu={readOnly ? undefined : personMenu}>
                 {memberName(guildId, author)}
               </span>
               {author.is_bot && <BotTag />}
