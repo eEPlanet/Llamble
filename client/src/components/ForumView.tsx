@@ -23,9 +23,8 @@ type FMsg = Message & { forum: ForumParts; likes: number; liked: boolean; reply_
 
 const LIKE = "❤️";
 export const BRANCH_SETS: Record<string, { label: string; colors: string[] }> = {
-  // the default: Llamble's own colors, from the logo (ring blue, llama orange, spit green,
-  // ring purple, sky blue, warm orange)
-  llamble: { label: "Llamble", colors: ["#3f84eb", "#f07a3a", "#a6d052", "#7b70d6", "#8cc3ff", "#f0a060"] },
+  // the default: Llamble's own colors (navy app, spit green, ring blue and purple, no orange)
+  llamble: { label: "Llamble", colors: ["#a6d052", "#3f84eb", "#7b70d6", "#8cc3ff", "#c9e38f", "#a9a1ea"] },
   rainbow: { label: "Rainbow", colors: ["#1D9E75", "#7F77DD", "#D85A30", "#D4537E", "#BA7517", "#378ADD"] },
   calm: { label: "Calm", colors: ["#5DCAA5", "#85B7EB", "#AFA9EC", "#97C459", "#ED93B1", "#FAC775"] },
   mono: { label: "Mono", colors: ["#B4B2A9", "#888780", "#D3D1C7", "#5F5E5A", "#B4B2A9", "#888780"] },

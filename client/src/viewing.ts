@@ -13,7 +13,7 @@ function wanted(): string | null {
   const cid = currentChannelId(s);
   const ch = cid ? s.channels[cid] : undefined;
   // chat spaces, and rooms (voice, Watch): being in a room's space counts even after hanging up
-  return ch && ["text", "voice", "watch"].includes(ch.kind) && ch.guild_id ? ch.id : null;
+  return ch && ["text", "voice", "watch", "forum", "stage"].includes(ch.kind) && ch.guild_id ? ch.id : null;
 }
 
 function update() {

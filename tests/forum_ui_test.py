@@ -88,6 +88,11 @@ with sync_playwright() as p:
     assert pg.locator(".post-card.has-media .fc-media img").count() == 1, "picture post shows its picture"
     pg.screenshot(path=f"{OUT}/forum-list.png")
 
+    # whoever has the forum open shows under it in the list ("who's here"), like chat
+    pg.wait_for_timeout(500)
+    here = pg.locator(".channel:has-text('Help and questions') + .voice-users .voice-user").all_inner_texts()
+    assert any("Maya" in h for h in here), "Maya should show under the forum she's reading: " + str(here)
+
     # a phone
     ph = page(p, users["lena"], 412, 900, True)
     if ph.locator(".m-menu").count() and ph.locator(".m-menu").is_visible():

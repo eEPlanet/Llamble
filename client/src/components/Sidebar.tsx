@@ -305,7 +305,7 @@ function ChannelRow({ ch }: { ch: Channel }) {
   const mentions = useStore((s) => s.mentions[ch.id] || 0);
   const manage = can(ch.guild_id, P.MANAGE_CHANNELS);
   const voiceStates = useStore((s) => s.voiceStates);
-  const room = ch.kind === "voice" || ch.kind === "watch";
+  const room = ch.kind === "voice" || ch.kind === "watch" || ch.kind === "stage";
   const inThis = useVoice((v) => v.channelId === ch.id);
   const friends = useStore((s) => s.friends);
   const me = useStore((s) => s.me?.id);

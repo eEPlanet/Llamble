@@ -1800,7 +1800,7 @@ body.pop-body > .pop { height: 100vh; }
 /* ---- forum spaces (colors are variables so card style packs can restyle them) ---- */
 .forum {
   --fc-a: var(--bg-1); --fc-b: var(--bg-3); --fc-post: var(--bg-1); --fc-border: rgba(255,255,255,0.07); --fc-radius: 12px;
-  --fc-1: #3f84eb; --fc-2: #f07a3a; --fc-3: #a6d052; --fc-4: #7b70d6; --fc-5: #8cc3ff; --fc-6: #f0a060;
+  --fc-1: #a6d052; --fc-2: #3f84eb; --fc-3: #7b70d6; --fc-4: #8cc3ff; --fc-5: #c9e38f; --fc-6: #a9a1ea;
   display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0;
 }
 .forum-scroll { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow-y: auto; }
