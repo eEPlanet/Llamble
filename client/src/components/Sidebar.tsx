@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useStages } from "../stage";
 import { block, report, unblock } from "../safety";
 import { listeningIn, useListen } from "../listen";
 import { useShows } from "../show";
@@ -68,7 +69,7 @@ function GuildHeader({ guildId }: { guildId: string }) {
 
 /** Each kind of space has a full-color mark: 💬 chat, 🔊 voice & video, 🍿 watch party. */
 export function spaceEmoji(kind: string): string {
-  return kind === "voice" ? "🔊" : kind === "watch" ? "🍿" : kind === "forum" ? "🗂️" : "💬";
+  return kind === "voice" ? "🔊" : kind === "watch" ? "🍿" : kind === "forum" ? "🗂️" : kind === "stage" ? "🎙️" : "💬";
 }
 
 /** The type headings spaces sort under by themselves (unless they're in a group). */
@@ -76,6 +77,7 @@ const TYPE_GROUPS: { kind: Channel["kind"]; label: string }[] = [
   { kind: "text", label: "Chat" },
   { kind: "voice", label: "Voice & Video" },
   { kind: "watch", label: "Watch" },
+  { kind: "stage", label: "Shows" },
   { kind: "forum", label: "Forums" },
 ];
 
@@ -299,7 +301,7 @@ function BoardRows({ guildId }: { guildId: string }) {
 function ChannelRow({ ch }: { ch: Channel }) {
   const active = useStore((s) => currentChannelId(s) === ch.id);
   // chat you haven't seen: chat spaces, and the chats of voice and Watch spaces
-  const unread = useStore((s) => ["text", "voice", "watch", "forum"].includes(ch.kind) && isUnread(ch, s));
+  const unread = useStore((s) => ["text", "voice", "watch", "forum", "stage"].includes(ch.kind) && isUnread(ch, s));
   const mentions = useStore((s) => s.mentions[ch.id] || 0);
   const manage = can(ch.guild_id, P.MANAGE_CHANNELS);
   const voiceStates = useStore((s) => s.voiceStates);
@@ -331,7 +333,7 @@ function ChannelRow({ ch }: { ch: Channel }) {
   };
   const menu = (e: React.MouseEvent) =>
     openMenu(e, [
-      { label: "Mark As Read", onClick: () => ch.last_message_id && api(`/api/channels/${ch.id}/ack`, { body: { message_id: ch.last_message_id } }), disabled: !["text", "voice", "watch", "forum"].includes(ch.kind) },
+      { label: "Mark As Read", onClick: () => ch.last_message_id && api(`/api/channels/${ch.id}/ack`, { body: { message_id: ch.last_message_id } }), disabled: !["text", "voice", "watch", "forum", "stage"].includes(ch.kind) },
       { label: "Edit Space", onClick: () => openModal({ kind: "editChannel", channelId: ch.id }), disabled: !manage },
       ...(manage ? [{ label: "Move to…", onClick: () => setTimeout(() => moveToMenu(e, ch), 0) }] : []),
       {
@@ -367,10 +369,11 @@ function ChannelRow({ ch }: { ch: Channel }) {
         draggable={manage}
         onDragStart={() => (dragging = { id: ch.id, group: false })}
         onDragEnd={() => (dragging = null)}
-        title={ch.kind === "text" ? "Chat space" : ch.kind === "voice" ? "Voice & Video space" : ch.kind === "watch" ? "Watch Party space" : ch.kind === "forum" ? "Forum space" : undefined}
+        title={ch.kind === "text" ? "Chat space" : ch.kind === "voice" ? "Voice & Video space" : ch.kind === "watch" ? "Watch Party space" : ch.kind === "forum" ? "Forum space" : ch.kind === "stage" ? "Show space" : undefined}
       >
         <span className="channel-icon channel-emoji-icon">{spaceEmoji(ch.kind)}</span>
         <span className="ellipsis">{ch.name}</span>
+        {ch.kind === "stage" && <StageLiveTag cid={ch.id} />}
         {unread && !active && !mentions && <span className="new-dot" title="New messages" />}
         {ch.locked && <span title="Locked: only staff can go in">🔒</span>}
         {ch.kind === "voice" && <RecBadge channelId={ch.id} />}
@@ -827,4 +830,10 @@ function ListeningLine({ channelId }: { channelId: string | null }) {
       👂 {bot} is listening
     </div>
   );
+}
+
+/** LIVE next to a show space that's on air. */
+function StageLiveTag({ cid }: { cid: string }) {
+  const live = useStages((s) => !!s.live[cid]);
+  return live ? <span className="stage-live small">LIVE</span> : null;
 }

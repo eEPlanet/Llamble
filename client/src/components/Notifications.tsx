@@ -76,6 +76,14 @@ function describe(n: Notice): { text: string; who?: any; guild?: any; open?: () 
         who: d.from,
         open: () => goToForumPost(d.channel_id, d.post_id, d.message_id),
       };
+    case "show_live":
+      return { text: `🔴 Live now: “${d.title}”${d.guild?.name ? ` in ${d.guild.name}` : ""}`, open: () => goToSpace(d.channel_id) };
+    case "show_scheduled":
+      return { text: `New show: “${d.title}”, ${showWhen(d.starts_at)}${d.guild?.name ? ` in ${d.guild.name}` : ""}`, open: () => goToSpace(d.channel_id) };
+    case "show_reminder":
+      return { text: `${d.when === "soon" ? "Starting in 15 minutes" : "Tomorrow"}: “${d.title}”${d.guild?.name ? ` in ${d.guild.name}` : ""}`, open: () => goToSpace(d.channel_id) };
+    case "show_cancelled":
+      return { text: `Cancelled: “${d.title}”`, open: () => goToSpace(d.channel_id) };
     case "report":
       return {
         text: `${nameOf(d.about)} was reported (${reasonLabel(d.reason).toLowerCase()})${d.guild?.name ? ` in ${d.guild.name}` : ""}${d.preview ? `: “${d.preview}”` : ""}`,
@@ -315,4 +323,10 @@ export function InviteCard({ cardId, guild: fallback }: { cardId: string; guild?
       )}
     </div>
   );
+}
+
+const showWhen = (ms: number) => new Date(ms).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+function goToSpace(cid: string) {
+  const ch = useStore.getState().channels[cid];
+  if (ch?.guild_id) selectChannel(ch.guild_id, cid);
 }

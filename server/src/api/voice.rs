@@ -59,6 +59,7 @@ pub async fn leave_voice(state: &Shared, user_id: &str) {
         }
         broadcast_voice(state, &vs.channel_id, json!({ "user_id": user_id, "channel_id": null, "guild_id": vs.guild_id })).await;
         crate::api::watch::left_room(state, &vs.channel_id, user_id).await;
+        crate::api::stage::left_room(state, &vs.channel_id, user_id).await;
         // the call is over: people added to it can't come back in
         if empty {
 
@@ -76,7 +77,7 @@ pub async fn join(State(state): State<Shared>, auth: AuthUser, Path(cid): Path<S
     // learned its address or after an update: give it a moment instead of failing the call
     crate::voice_server::wait_ready(&state, std::time::Duration::from_secs(12)).await;
     let ch = load_channel(&state.db, &cid).await?;
-    if !(ch.kind == "voice" || ch.kind == "dm" || ch.kind == "party" || ch.kind == "watch") {
+    if !(ch.kind == "voice" || ch.kind == "dm" || ch.kind == "party" || ch.kind == "watch" || ch.kind == "stage") {
         return Err(AppError::bad("that isn't a voice room"));
     }
     if ch.kind == "watch" {
@@ -106,11 +107,18 @@ pub async fn join(State(state): State<Shared>, auth: AuthUser, Path(cid): Path<S
     };
     // a Watch Party already playing: late joiners come in with their mic held (no barging in)
     let held = ch.kind == "watch" && p & perms::SPEAK != 0 && crate::api::watch::hold_on_join(&state, &cid, &auth.id, p).await;
+    if ch.kind == "stage" && !guest {
+        crate::api::stage::may_join(&state, &cid, &auth.id, p).await?;
+    }
     let mut sources = vec![];
-    if p & perms::SPEAK != 0 && !held {
+    if ch.kind == "stage" {
+        // a show: only the people on stage send anything; the audience watches
+        sources = crate::api::stage::sources_for(&state, &cid, &auth.id, p).await;
+    } else if p & perms::SPEAK != 0 && !held {
         sources.push("microphone");
     }
-    if ch.kind == "watch" {
+    if ch.kind == "stage" {
+    } else if ch.kind == "watch" {
         // a Watch Party: talk, plus a video file streamed from your device (sent as a
         // "screen share" track; the app offers no real screen sharing or camera here)
         if p & perms::VIDEO != 0 && state.s().watch_device_stream {
@@ -132,7 +140,7 @@ pub async fn join(State(state): State<Shared>, auth: AuthUser, Path(cid): Path<S
         user_id: auth.id.clone(),
         channel_id: cid.clone(),
         guild_id: ch.guild_id.clone(),
-        muted: p & perms::SPEAK == 0 || held,
+        muted: p & perms::SPEAK == 0 || held || (ch.kind == "stage" && !sources.contains(&"microphone")),
         deafened: false,
         video: false,
         screen: false,
@@ -146,7 +154,8 @@ pub async fn join(State(state): State<Shared>, auth: AuthUser, Path(cid): Path<S
         crate::api::watch::someone_came_back(&state, &cid).await;
     }
     let url = crate::voice_server::client_url(&state, &headers).await;
-    Ok(Json(json!({ "url": url, "token": token, "room": cid, "can_speak": p & perms::SPEAK != 0 && !held, "held": held, "can_video": p & perms::VIDEO != 0 })))
+    let (can_speak, can_video) = if ch.kind == "stage" { (sources.contains(&"microphone"), sources.contains(&"camera")) } else { (p & perms::SPEAK != 0 && !held, p & perms::VIDEO != 0) };
+    Ok(Json(json!({ "url": url, "token": token, "room": cid, "can_speak": can_speak, "held": held, "can_video": can_video })))
 }
 
 pub async fn leave(State(state): State<Shared>, auth: AuthUser) -> ApiResult<Json<Value>> {

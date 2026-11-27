@@ -122,7 +122,7 @@ export interface Role {
   deny?: number;
 }
 
-export type ChannelKind = "text" | "voice" | "category" | "dm" | "party" | "watch" | "forum";
+export type ChannelKind = "text" | "voice" | "category" | "dm" | "party" | "watch" | "forum" | "stage";
 
 export interface Channel {
   id: string;

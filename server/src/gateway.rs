@@ -77,6 +77,7 @@ async fn ready_payload(state: &Shared, auth: &AuthUser) -> anyhow::Result<Value>
         "read_states": reads.into_iter().map(|(c, m)| json!({ "channel_id": c, "last_read_id": m })).collect::<Vec<_>>(),
         "presences": presences,
         "blocked": crate::api::safety::my_blocks(state, &auth.id).await,
+        "stages": crate::api::stage::live_for(state, &auth.id).await,
         "my_status": { "status": status_of(state, &auth.id), "hide_activity": hidden(&auth.id) },
         // not seen the tutorial yet: the app offers it
         // (LLAMBLE_SKIP_TUTORIAL=1: automated tests sign in fresh accounts and don't want the tour)
@@ -368,7 +369,7 @@ async fn session(state: Shared, auth: AuthUser, sock: WebSocket, quiet: bool) {
                                 let ok = match &cid {
                                     Some(c) => match crate::models::load_channel(&state.db, c).await {
                                         // chat spaces, and rooms (voice, Watch) whose chat you can be in without talking
-                                        Ok(ch) => ch.guild_id.is_some() && ["text", "voice", "watch", "forum"].contains(&ch.kind.as_str()) && crate::perms::require_channel(&state.db, &ch, &auth.id, crate::perms::VIEW).await.is_ok(),
+                                        Ok(ch) => ch.guild_id.is_some() && ["text", "voice", "watch", "forum", "stage"].contains(&ch.kind.as_str()) && crate::perms::require_channel(&state.db, &ch, &auth.id, crate::perms::VIEW).await.is_ok(),
                                         Err(_) => false,
                                     },
                                     None => true,

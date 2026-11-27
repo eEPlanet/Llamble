@@ -12,6 +12,7 @@ pub mod watch;
 pub mod notifications;
 pub mod safety;
 pub mod forum;
+pub mod stage;
 pub mod notes;
 pub mod schedule;
 pub mod social;
@@ -249,6 +250,20 @@ pub fn router(state: Shared) -> Router<Shared> {
         .route("/api/guilds/{gid}/join-requests", get(discover::list_requests))
         .route("/api/guilds/{gid}/join-requests/{uid}/{what}", post(discover::decide))
         .route("/api/gateway", get(crate::gateway::upgrade))
+        .route("/api/channels/{cid}/stage", get(stage::get))
+        .route("/api/channels/{cid}/stage/live", post(stage::go_live))
+        .route("/api/channels/{cid}/stage/end", post(stage::end))
+        .route("/api/channels/{cid}/stage/hand", post(stage::hand))
+        .route("/api/channels/{cid}/stage/hands", post(stage::hands))
+        .route("/api/channels/{cid}/stage/bring", post(stage::bring))
+        .route("/api/channels/{cid}/stage/back", post(stage::send_back))
+        .route("/api/channels/{cid}/stage/mute", post(stage::mute))
+        .route("/api/channels/{cid}/stage/role", post(stage::set_role))
+        .route("/api/channels/{cid}/stage/director", post(stage::director))
+        .route("/api/channels/{cid}/stage/events", post(stage::schedule))
+        .route("/api/channels/{cid}/follow", put(stage::follow).delete(stage::unfollow))
+        .route("/api/stage-events/{id}", delete(stage::cancel))
+        .route("/api/stage-events/{id}/interested", put(stage::interested).delete(stage::not_interested))
         .route("/api/channels/{cid}/forum", get(forum::list))
         .route("/api/channels/{cid}/forum/{pid}", get(forum::thread))
         .route("/api/forum/{pid}/follow", put(forum::follow).delete(forum::unfollow))

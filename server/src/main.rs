@@ -91,6 +91,7 @@ async fn main() -> anyhow::Result<()> {
     api::notifications::migrate(&state.db).await?;
     api::safety::migrate(&state.db).await?;
     api::forum::migrate(&state.db).await?;
+    api::stage::migrate(&state.db).await?;
     api::invite_cards::migrate(&state.db).await?;
     api::discover::migrate(&state.db).await?;
     api::greeting::migrate(&state.db).await?;
@@ -112,6 +113,7 @@ async fn main() -> anyhow::Result<()> {
     // the demo sandbox (app store reviewers): who is in it, and its nightly rebuild
     demo::load(&state).await;
     demo::spawn_nightly(state.clone());
+    api::stage::spawn_reminders(state.clone());
     tokio::spawn(janitor(state.clone()));
     tokio::spawn(api::files::backfill_video_thumbs(state.clone()));
     tokio::spawn(ai::boot(state.clone()));

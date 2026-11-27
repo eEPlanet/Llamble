@@ -239,8 +239,8 @@ pub fn clean_channel_name(kind: &str, name: &str) -> String {
 
 pub async fn create_channel(State(state): State<Shared>, auth: AuthUser, Path(gid): Path<String>, Json(req): Json<CreateChannel>) -> ApiResult<Json<Channel>> {
     require_guild(&state.db, &gid, &auth.id, perms::MANAGE_CHANNELS).await?;
-    if !["text", "voice", "category", "watch", "forum"].contains(&req.kind.as_str()) {
-        return Err(AppError::bad("kind must be text, voice, watch, forum or category"));
+    if !["text", "voice", "category", "watch", "forum", "stage"].contains(&req.kind.as_str()) {
+        return Err(AppError::bad("kind must be text, voice, watch, forum, stage or category"));
     }
     if req.kind == "watch" && !state.s().watch_party {
         return Err(AppError::forbidden_msg("Watch Party is turned off on this Llamble"));

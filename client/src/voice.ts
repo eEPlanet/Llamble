@@ -1147,7 +1147,13 @@ window.setInterval(recoverMic, 5000);
 // Watch Party: the server gave a held guest their mic back
 onEvent((t, d) => {
   if (t !== "WATCH_TALK" || d.channel_id !== vget().channelId) return;
-  vset({ held: false, canSpeak: !!d.can_speak });
+  vset({ held: false, canSpeak: !!d.can_speak, ...(d.stage ? { canVideo: !!d.can_video } : {}) });
+  // a show: sent back to the audience (or muted): what you were sending stops
+  if (d.stage && !d.can_speak && room) setMic(room, false).catch(() => {});
+  if (d.stage && !d.can_video) {
+    if (vget().camera) toggleCamera().catch(() => {});
+    if (vget().screen) stopScreenShare().catch(() => {});
+  }
   syncServerState();
   // the voice server needs a moment to apply the new permission before the mic can go out
   const r = room;

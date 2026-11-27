@@ -1,4 +1,5 @@
 import { RecordingBar } from "./RecordingBar";
+import { StageView } from "./StageView";
 import { ForumView } from "./ForumView";
 import { refreshVoicemailCount, UrgentAlert, useVoicemailCount, VoicemailPage } from "./VoiceMessage";
 import { CallScreens, CallStrip } from "./Calls";
@@ -164,6 +165,8 @@ export function Shell() {
               <PartyView channel={channel} />
             ) : channel.kind === "forum" ? (
               <ForumView key={channel.id} channel={channel} />
+            ) : channel.kind === "stage" ? (
+              <StageView key={channel.id} channel={channel} />
             ) : (
               <ChatView key={channel.id} channel={channel} />
             )

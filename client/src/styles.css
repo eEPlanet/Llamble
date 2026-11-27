@@ -1862,3 +1862,46 @@ body.pop-body > .pop { height: 100vh; }
 .fc-pick { position: relative; cursor: pointer; }
 .fc-pick img, .fc-pick video { width: 88px; height: 66px; object-fit: cover; border-radius: 8px; display: block; }
 .fc-x { position: absolute; top: 2px; right: 2px; background: rgba(0,0,0,0.65); color: #fff; border-radius: 50%; width: 18px; height: 18px; font-size: 11px; display: flex; align-items: center; justify-content: center; }
+
+/* ---- show spaces ---- */
+.stage-view { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
+.stage-live { background: #e5383b; color: #fff; font-weight: 700; font-size: 11px; letter-spacing: .06em; border-radius: 4px; padding: 1px 6px; }
+.channel .stage-live { margin-left: 4px; font-size: 10px; }
+.stage-offair { flex: 1; overflow-y: auto; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 30px 20px; text-align: center; }
+.stage-big-live { background: #e5383b; color: #fff; font-weight: 800; letter-spacing: .1em; border-radius: 6px; padding: 4px 14px; }
+.stage-schedule { width: 100%; max-width: 620px; text-align: left; margin-top: 18px; }
+.stage-sched-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.stage-sched-form { display: flex; flex-direction: column; gap: 8px; background: var(--bg-1); border-radius: 10px; padding: 10px; margin-bottom: 8px; }
+.stage-sched-form .row-end { display: flex; justify-content: flex-end; gap: 8px; }
+.stage-event { display: flex; align-items: center; gap: 10px; background: var(--bg-1); border-radius: 10px; padding: 10px 12px; margin: 6px 0; }
+.stage-live-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow-y: auto; padding: 10px 14px; gap: 10px; }
+.stage-backstage { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; background: rgba(242,184,75,0.12); border: 1px solid rgba(242,184,75,0.35); border-radius: 10px; padding: 8px 12px; }
+.stage-golive { display: inline-flex; gap: 6px; margin-left: auto; }
+.stage-golive input { width: 200px; }
+.stage-main { flex: 1; min-height: 240px; display: flex; align-items: stretch; justify-content: center; background: #000; border-radius: 12px; overflow: hidden; }
+.stage-main > .tile { flex: 1; border-radius: 0; }
+.stage-main.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 6px; padding: 6px; background: #000; }
+.stage-empty { align-self: center; }
+.stage-faces { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
+.stage-face { display: flex; flex-direction: column; align-items: center; gap: 3px; width: 76px; cursor: pointer; position: relative; }
+.stage-face .avatar, .stage-face img { border-radius: 50%; box-shadow: 0 0 0 3px transparent; transition: box-shadow .15s; }
+.stage-face.talking .avatar, .stage-face.talking img { box-shadow: 0 0 0 3px var(--green); }
+.stage-face-name { font-size: 12px; max-width: 76px; }
+.stage-tag { font-size: 10px; background: var(--brand); color: var(--on-brand); border-radius: 4px; padding: 0 5px; }
+.stage-muted { position: absolute; top: 34px; right: 10px; font-size: 13px; }
+.stage-audience { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding-top: 6px; border-top: 1px solid rgba(255,255,255,0.06); }
+.stage-aud { cursor: pointer; position: relative; border-radius: 50%; }
+.stage-aud.hand::after { content: "✋"; position: absolute; right: -6px; top: -8px; font-size: 13px; }
+.stage-panel { background: var(--bg-1); border-radius: 10px; padding: 10px 12px; }
+.stage-panel-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.stage-hand-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+.stage-layouts { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.stage-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 6px 0 2px; }
+.stage-controls .icon-btn.round { width: 40px; height: 40px; border-radius: 50%; background: var(--btn); display: inline-flex; align-items: center; justify-content: center; }
+.stage-controls .icon-btn.round.on { background: var(--green); color: #0b1a10; }
+.stage-controls .icon-btn.round.off { background: var(--red); color: #fff; }
+@media (max-width: 700px) {
+  .stage-main { min-height: 200px; }
+  .stage-golive { margin-left: 0; width: 100%; }
+  .stage-golive input { flex: 1; width: auto; }
+}

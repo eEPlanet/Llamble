@@ -263,11 +263,20 @@ pub async fn read_mentions_upto(state: &Shared, user_id: &str, channel_id: &str,
 
 /// A message was deleted: its mention notifications go too.
 pub async fn forget_message(state: &Shared, message_id: &str) {
-    let rows: Vec<(String, String)> = sqlx::query_as("SELECT id, user_id FROM notifications WHERE kind = 'mention' AND ref_id = ?").bind(message_id).fetch_all(&state.db).await.unwrap_or_default();
+    let rows: Vec<(String, String)> = sqlx::query_as("SELECT id, user_id FROM notifications WHERE kind IN ('mention','forum_reply') AND ref_id = ?").bind(message_id).fetch_all(&state.db).await.unwrap_or_default();
     if rows.is_empty() {
         return;
     }
-    let _ = sqlx::query("DELETE FROM notifications WHERE kind = 'mention' AND ref_id = ?").bind(message_id).execute(&state.db).await;
+    let _ = sqlx::query("DELETE FROM notifications WHERE kind IN ('mention','forum_reply') AND ref_id = ?").bind(message_id).execute(&state.db).await;
+    for (id, u) in rows {
+        state.hub.send_user(&u, "NOTIFICATION_DELETE", &json!({ "ids": [id] }));
+    }
+}
+
+/// A scheduled show was cancelled: its "new show" and reminder notifications go.
+pub async fn forget_ref(state: &Shared, ref_id: &str) {
+    let rows: Vec<(String, String)> = sqlx::query_as("SELECT id, user_id FROM notifications WHERE kind IN ('show_scheduled','show_reminder') AND ref_id = ?").bind(ref_id).fetch_all(&state.db).await.unwrap_or_default();
+    let _ = sqlx::query("DELETE FROM notifications WHERE kind IN ('show_scheduled','show_reminder') AND ref_id = ?").bind(ref_id).execute(&state.db).await;
     for (id, u) in rows {
         state.hub.send_user(&u, "NOTIFICATION_DELETE", &json!({ "ids": [id] }));
     }
