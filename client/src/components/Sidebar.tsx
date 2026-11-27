@@ -741,7 +741,7 @@ function VoicePanel() {
       </div>
       {v.error && <div className="voice-error small">{v.error}</div>}
       <ListeningLine channelId={v.channelId} />
-      {channel?.kind === "watch" ? null : (
+      {channel?.kind === "watch" || channel?.kind === "stage" ? null : (
       <div className="voice-panel-btns">
         <button className={"vbtn" + (v.camera ? " on" : "")} disabled={!v.canVideo} onClick={toggleCamera} title="Camera">
           <Icon name={v.camera ? "video" : "videoOff"} size={18} /> Video

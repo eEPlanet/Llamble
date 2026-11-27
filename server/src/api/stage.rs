@@ -491,17 +491,49 @@ pub async fn set_role(State(state): State<Shared>, auth: AuthUser, Path(cid): Pa
     Ok(Json(json!({ "ok": true })))
 }
 
-/// POST /api/channels/{cid}/stage/director {layout, focus, follow_talk}: what the audience
-/// sees. layout: auto (main shot + faces) | spotlight (one person or screen) | grid (everyone).
+/// POST /api/channels/{cid}/stage/director {...}: what the audience sees, the same settings the
+/// recording director uses (every app paints the stage from them with the same scene engine):
+/// - focus ("<uid>" camera or "screen:<uid>") and hold (the director's pick stays put)
+/// - follow_talk: the main shot jumps to whoever talks
+/// - layout: auto (main shot + pop-up windows) | screen (main shot + everyone's face) | grid
+/// - pip (talker | talkers | off), pip_pos (tl | tr | bl | br), pip_size (s | m | l)
+/// - title (bar at the top), lower_third {text, sub}, card (full-screen, e.g. "Be right back")
+/// Only the fields sent change; send null to clear one.
 pub async fn director(State(state): State<Shared>, auth: AuthUser, Path(cid): Path<String>, Json(req): Json<Value>) -> ApiResult<Json<Value>> {
     let (ch, p) = stage_channel(&state, &cid, &auth.id).await?;
     if !runs(&state, &cid, &auth.id, p).await {
         return Err(AppError::forbidden_msg("only the host directs the show"));
     }
     ensure(&state, &cid).await;
-    let layout = req["layout"].as_str().filter(|l| ["auto", "spotlight", "grid"].contains(l)).unwrap_or("auto");
-    let focus = req["focus"].as_str().map(|f| f.chars().take(64).collect::<String>());
-    let d = json!({ "layout": layout, "focus": focus, "follow_talk": req["follow_talk"].as_bool().unwrap_or(false) });
+    let cur: String = sqlx::query_scalar("SELECT director FROM stages WHERE channel_id = ?").bind(&cid).fetch_one(&state.db).await?;
+    let mut d: serde_json::Map<String, Value> = serde_json::from_str(&cur).unwrap_or_default();
+    let text = |v: &Value, n: usize| -> Value {
+        match v.as_str() {
+            Some(s) if !s.trim().is_empty() => json!(s.trim().chars().filter(|c| !c.is_control()).take(n).collect::<String>()),
+            _ => Value::Null,
+        }
+    };
+    let pick = |v: &Value, ok: &[&str], def: &str| -> Value { json!(v.as_str().filter(|x| ok.contains(x)).unwrap_or(def)) };
+    let Some(obj) = req.as_object() else { return Err(AppError::bad("send the director's settings")) };
+    for (k, v) in obj {
+        let val = match k.as_str() {
+            "focus" => text(v, 64),
+            "hold" | "follow_talk" => json!(v.as_bool().unwrap_or(false)),
+            "layout" => pick(v, &["auto", "screen", "grid"], "auto"),
+            "pip" => pick(v, &["talker", "talkers", "off"], "talker"),
+            "pip_pos" => pick(v, &["tl", "tr", "bl", "br"], "br"),
+            "pip_size" => pick(v, &["s", "m", "l"], "m"),
+            "title" => text(v, 80),
+            "card" => text(v, 80),
+            "lower_third" => match text(&v["text"], 60) {
+                Value::Null => Value::Null,
+                t => json!({ "text": t, "sub": text(&v["sub"], 80) }),
+            },
+            _ => continue,
+        };
+        d.insert(k.clone(), val);
+    }
+    let d = Value::Object(d);
     sqlx::query("UPDATE stages SET director = ? WHERE channel_id = ?").bind(d.to_string()).bind(&cid).execute(&state.db).await?;
     changed(&state, &ch).await;
     Ok(Json(json!({ "ok": true, "director": d })))

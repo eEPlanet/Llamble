@@ -4,17 +4,18 @@
 // one person or screen, or everyone), the people on stage as round faces (a green ring on
 // whoever talks), the audience below, and the controls for who you are: the audience raise a
 // hand; people on stage get their mic, camera and screen; the host directs and runs hands.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Track, type Participant } from "livekit-client";
+import { Compositor, type Show, type ShowState } from "../show";
 import { api } from "../api";
 import { memberName, useStore } from "../store";
 import type { Channel } from "../types";
-import { openMenu, toast } from "../ui";
-import { joinVoice, leaveVoice, participants, setWatching, stopScreenShare, toggleCamera, toggleMute, useVoice } from "../voice";
+import { openMenu, openModal, toast } from "../ui";
+import { canShareScreen, defaultShareQuality, joinVoice, leaveVoice, participants, startScreenShare, stopScreenShare, toggleCamera, toggleMute, useVoice } from "../voice";
 import { loadStage, useStages, type Stage } from "../stage";
 import { ChatView } from "./ChatView";
 import { Avatar, Icon } from "./common";
-import { RoomChatButton, ScreenPicker, Tile } from "./VoiceView";
+import { RoomChatButton } from "./VoiceView";
 import { useIsPhone } from "../phone";
 
 const post = (cid: string, path: string, body?: any) => api(`/api/channels/${cid}/stage/${path}`, { body: body || {} }).catch((e) => toast(e.message, "error"));
@@ -187,69 +188,108 @@ function Schedule({ channel, stage }: { channel: Channel; stage: Stage }) {
   );
 }
 
+/** The people on stage as the director's scene engine sees them: a "show" whose people are
+ * everyone on stage (cameras and screens), with the director's settings. */
+function stageShow(stage: Stage, onStage: string[]): Show {
+  const all = { voice: true, camera: true, screen: true };
+  return {
+    id: "stage:" + stage.channel_id,
+    channel_id: stage.channel_id,
+    title: stage.title,
+    initiator_id: "",
+    recorder_id: "",
+    director_id: "",
+    recorder_ok: true,
+    director_ok: true,
+    status: "recording",
+    state: (stage.director || {}) as ShowState,
+    started_at: stage.live_since,
+    ended_at: null,
+    size: 0,
+    people: onStage.map((u) => ({ user_id: u, wanted: all, consent: all })),
+    video_url: null,
+  } as Show;
+}
+
+/** Who's on stage: hosts and guests, plus anyone sending something (server staff). */
+function onStageIds(stage: Stage): string[] {
+  return participants()
+    .filter((p) => {
+      const r = stage.roles.find((x) => x.user_id === p.identity)?.role;
+      return r === "host" || r === "guest" || p.trackPublications.size > 0;
+    })
+    .map((p) => p.identity);
+}
+
+/** The stage, painted by the same scene engine as the recording director's preview: the main
+ * shot, pop-up windows or everyone's faces or a grid, lower third, title bar, full-screen card. */
+function StageCanvas({ stage, className }: { stage: Stage; className?: string }) {
+  const box = useRef<HTMLDivElement>(null);
+  const latest = useRef(stage);
+  latest.current = stage;
+  const phone = useIsPhone();
+  useEffect(() => {
+    const comp = new Compositor(() => stageShow(latest.current, onStageIds(latest.current)), phone ? 960 : 1280, phone ? 540 : 720);
+    comp.canvas.className = "stage-canvas";
+    box.current?.appendChild(comp.canvas);
+    let raf = 0;
+    let last = 0;
+    const loop = (t: number) => {
+      raf = requestAnimationFrame(loop);
+      if (t - last < 33) return; // about 30 frames a second
+      last = t;
+      comp.draw();
+    };
+    raf = requestAnimationFrame(loop);
+    return () => {
+      cancelAnimationFrame(raf);
+      comp.canvas.remove();
+      comp.destroy();
+    };
+  }, [phone]);
+  return <div ref={box} className={"stage-canvas-box " + (className || "")} />;
+}
+
 function LiveStage({ channel, stage }: { channel: Channel; stage: Stage }) {
   const v = useVoice();
   useVoice((s) => s.version);
   const me = useStore((s) => s.me)!;
   const users = useStore((s) => s.users);
-  const [picker, setPicker] = useState(false);
   const [title, setTitle] = useState("");
-  const [panel, setPanel] = useState<"director" | "hands" | null>(null);
+  const [panel, setPanel] = useState<"hands" | null>(null);
+  const [directing, setDirecting] = useState(false);
   const roleOf = (uid: string) => stage.roles.find((r) => r.user_id === uid);
   const ps = participants();
-  // who's on stage: hosts and guests, plus anyone sending something (server staff)
-  const onStage = ps.filter((p) => {
-    const r = roleOf(p.identity)?.role;
-    return r === "host" || r === "guest" || p.trackPublications.size > 0;
-  });
-  const audience = ps.filter((p) => !onStage.includes(p));
+  const onIds = onStageIds(stage);
+  const onStage = ps.filter((p) => onIds.includes(p.identity));
+  const audience = ps.filter((p) => !onIds.includes(p.identity));
   const mine = roleOf(me.id);
-  const iAmOn = onStage.some((p) => p.identity === me.id);
+  const iAmOn = onIds.includes(me.id);
   const handUp = stage.hands.some((h) => h.user_id === me.id);
-  // screens on stage are part of the show: always watched
-  useEffect(() => {
-    for (const p of onStage) if (p.identity !== me.id) setWatching(p.identity, "screen", true);
-  }, [onStage.map((p) => p.identity).join(",")]);
-
-  const d = stage.director || {};
   const name = (uid: string) => memberName(channel.guild_id, users[uid]) || "Someone";
-  // the main shot: the director's pick, or whoever's talking (if following talk), or the first host
-  const talker = onStage.find((p) => v.speaking.includes(p.identity));
-  const pick = (focus: string | null | undefined): { p: Participant; src: Track.Source } | null => {
-    if (!focus) return null;
-    const screen = focus.startsWith("screen:");
-    const uid = screen ? focus.slice(7) : focus;
-    const p = onStage.find((x) => x.identity === uid);
-    if (!p) return null;
-    const hasScreen = !!p.getTrackPublication(Track.Source.ScreenShare);
-    return { p, src: screen || hasScreen ? Track.Source.ScreenShare : Track.Source.Camera };
-  };
-  const main =
-    pick(d.layout === "spotlight" || !d.follow_talk ? d.focus : null) ||
-    (d.follow_talk && talker ? pick(talker.identity) : null) ||
-    pick(d.focus) ||
-    (onStage[0] ? pick(onStage[0].identity) : null);
 
   const faceMenu = (e: React.MouseEvent, uid: string) => {
     e.preventDefault();
     const r = roleOf(uid);
+    const onNow = onIds.includes(uid);
     const items: any[] = [];
-    if (stage.can_run) {
-      items.push({ label: "Put on the main shot", onClick: () => post(channel.id, "director", { ...d, layout: d.layout === "grid" ? "auto" : d.layout || "auto", focus: uid }) });
-      items.push({ label: "Their screen on the main shot", onClick: () => post(channel.id, "director", { ...d, layout: "spotlight", focus: "screen:" + uid }) });
+    if (stage.can_run && onNow) {
+      items.push({ label: "Put their camera on the main shot", onClick: () => post(channel.id, "director", { focus: uid, hold: true }) });
+      if (ps.find((p) => p.identity === uid)?.getTrackPublication(Track.Source.ScreenShare)) items.push({ label: "Put their screen on the main shot", onClick: () => post(channel.id, "director", { focus: "screen:" + uid, hold: true }) });
     }
     if (stage.can_manage && uid !== me.id && r && (r.role === "guest" || r.role === "host")) {
       items.push({ label: r.muted ? "Unmute" : "Mute", onClick: () => post(channel.id, "mute", { user_id: uid, muted: !r.muted }) });
     }
     if (stage.can_manage && r?.role === "guest") items.push({ label: "Send back to the audience", danger: true, onClick: () => post(channel.id, "back", { user_id: uid }) });
-    if (stage.can_manage && !r && uid !== me.id) items.push({ label: "Bring up on stage", onClick: () => post(channel.id, "bring", { user_id: uid }) });
+    if (stage.can_manage && !onNow && uid !== me.id) items.push({ label: "Bring up on stage", onClick: () => post(channel.id, "bring", { user_id: uid }) });
     if (stage.can_run && uid !== me.id) {
       items.push({ separator: true, label: "" });
       if (r?.role !== "host") items.push({ label: "Make a host", onClick: () => post(channel.id, "role", { user_id: uid, role: "host" }) });
       if (r?.role !== "moderator") items.push({ label: "Make a moderator", onClick: () => post(channel.id, "role", { user_id: uid, role: "moderator" }) });
       if (r && r.role !== "guest") items.push({ label: "Take away their show role", onClick: () => post(channel.id, "role", { user_id: uid, role: "none" }) });
     }
-    if (items.length) openMenu(e, items);
+    items.push({ separator: true, label: "" }, { label: "Profile", onClick: () => openModal({ kind: "profile", userId: uid, guildId: channel.guild_id }) });
+    openMenu(e, items);
   };
 
   const face = (p: Participant) => {
@@ -263,6 +303,12 @@ function LiveStage({ channel, stage }: { channel: Channel; stage: Stage }) {
         {r?.muted && <span className="stage-muted">🔇</span>}
       </div>
     );
+  };
+
+  const share = () => {
+    if (v.screen) return stopScreenShare();
+    if (window.llambleNative) openModal({ kind: "screenPicker" });
+    else startScreenShare("", true, defaultShareQuality()).catch((e) => toast(e.message || "Couldn't share your screen", "error"));
   };
 
   return (
@@ -280,15 +326,7 @@ function LiveStage({ channel, stage }: { channel: Channel; stage: Stage }) {
           )}
         </div>
       )}
-      <div className={"stage-main" + (d.layout === "grid" ? " grid" : "")}>
-        {d.layout === "grid" ? (
-          onStage.map((p) => <Tile key={p.identity} spec={{ key: p.identity, participant: p, source: Track.Source.Camera }} guildId={channel.guild_id} onClick={() => {}} />)
-        ) : main ? (
-          <Tile key={main.p.identity + main.src} spec={{ key: main.p.identity, participant: main.p, source: main.src }} guildId={channel.guild_id} big bare onClick={() => {}} />
-        ) : (
-          <div className="stage-empty muted">Nobody's on stage yet.</div>
-        )}
-      </div>
+      <div className="stage-main">{onStage.length ? <StageCanvas stage={stage} /> : <div className="stage-empty muted">Nobody's on stage yet.</div>}</div>
       <div className="stage-faces">{onStage.map(face)}</div>
       {audience.length > 0 && (
         <div className="stage-audience">
@@ -329,30 +367,6 @@ function LiveStage({ channel, stage }: { channel: Channel; stage: Stage }) {
           ))}
         </div>
       )}
-      {panel === "director" && stage.can_run && (
-        <div className="stage-panel">
-          <div className="stage-panel-head">
-            <b>Director</b>
-            <span className="muted small">What the audience sees. Tap a face to put them on the main shot.</span>
-          </div>
-          <div className="stage-layouts">
-            {(
-              [
-                ["auto", "Main shot + faces"],
-                ["spotlight", "Spotlight"],
-                ["grid", "Everyone"],
-              ] as const
-            ).map(([k, l]) => (
-              <button key={k} className={"btn small" + ((d.layout || "auto") === k ? " primary" : "")} onClick={() => post(channel.id, "director", { ...d, layout: k })}>
-                {l}
-              </button>
-            ))}
-            <label className="radio-row">
-              <input type="checkbox" checked={!!d.follow_talk} onChange={(e) => post(channel.id, "director", { ...d, follow_talk: e.target.checked })} /> Switch to whoever talks
-            </label>
-          </div>
-        </div>
-      )}
 
       <div className="stage-controls">
         {iAmOn ? (
@@ -361,14 +375,14 @@ function LiveStage({ channel, stage }: { channel: Channel; stage: Stage }) {
               <Icon name="mic" size={20} />
             </button>
             {v.canVideo && (
-              <>
-                <button className={"icon-btn round" + (v.camera ? " on" : "")} title="Camera" onClick={() => toggleCamera()}>
-                  <Icon name="video" size={20} />
-                </button>
-                <button className={"icon-btn round" + (v.screen ? " on" : "")} title="Share your screen" onClick={() => (v.screen ? stopScreenShare() : setPicker(true))}>
-                  <Icon name="screen" size={20} />
-                </button>
-              </>
+              <button className={"icon-btn round" + (v.camera ? " on" : "")} title="Camera" onClick={() => toggleCamera()}>
+                <Icon name="video" size={20} />
+              </button>
+            )}
+            {v.canVideo && (v.screen || canShareScreen()) && (
+              <button className={"icon-btn round" + (v.screen ? " on" : "")} title={v.screen ? "Stop sharing" : "Share your screen"} onClick={share}>
+                <Icon name="screen" size={20} />
+              </button>
             )}
             {mine?.role === "guest" && (
               <button className="btn small" onClick={() => post(channel.id, "back", { user_id: me.id })}>
@@ -388,7 +402,7 @@ function LiveStage({ channel, stage }: { channel: Channel; stage: Stage }) {
           </button>
         )}
         {stage.can_run && (
-          <button className={"btn small" + (panel === "director" ? " primary" : "")} onClick={() => setPanel(panel === "director" ? null : "director")}>
+          <button className="btn small" onClick={() => setDirecting(true)}>
             🎬 Director
           </button>
         )}
@@ -401,7 +415,140 @@ function LiveStage({ channel, stage }: { channel: Channel; stage: Stage }) {
           Leave
         </button>
       </div>
-      {picker && <ScreenPicker onClose={() => setPicker(false)} />}
+      {directing && stage.can_run && <StageDirector channel={channel} stage={stage} onClose={() => setDirecting(false)} />}
+    </div>
+  );
+}
+
+/** The director for a show: the same controls as the recording director, and its preview is
+ * exactly what the audience sees. */
+function StageDirector({ channel, stage, onClose }: { channel: Channel; stage: Stage; onClose: () => void }) {
+  useVoice((s) => s.version);
+  const users = useStore((s) => s.users);
+  const me = useStore((s) => s.me)!;
+  const st = (stage.director || {}) as ShowState;
+  const [lt, setLt] = useState({ text: st.lower_third?.text || "", sub: st.lower_third?.sub || "" });
+  const [title, setTitle] = useState(st.title || "");
+  const [card, setCard] = useState(st.card || "");
+  const [handTo, setHandTo] = useState("");
+  const name = (uid: string) => memberName(channel.guild_id, users[uid]) || "Someone";
+  const set = (x: Record<string, unknown>) => post(channel.id, "director", x);
+  const ps = participants();
+  const onIds = onStageIds(stage);
+  const shots: { key: string; label: string }[] = [];
+  for (const u of onIds) {
+    const p = ps.find((x) => x.identity === u);
+    shots.push({ key: u, label: name(u) });
+    if (p?.getTrackPublication(Track.Source.ScreenShare)) shots.push({ key: "screen:" + u, label: name(u) + "'s screen" });
+  }
+  const chip = (on: boolean, label: string, onClick: () => void, tip?: string) => (
+    <button className={"camfx-chip" + (on ? " on" : "")} onClick={onClick} title={tip}>
+      {label}
+    </button>
+  );
+  const layout = !st.layout || st.layout === "speaker" ? "auto" : st.layout;
+  const pip = st.pip ?? "talker";
+  const others = ps.filter((p) => p.identity !== me.id);
+  return (
+    <div className="director-full">
+      <div className="director-head">
+        <b>🎬 Director</b>
+        <span className="muted small">
+          {stage.live ? "Live: " + stage.title : "Backstage"} · what you see here is what the audience sees
+        </span>
+        <button className="btn small" onClick={onClose}>
+          Close
+        </button>
+      </div>
+      <div className="director-body">
+        <div className="director-stage">
+          <StageCanvas stage={stage} className="director-preview-box" />
+          <div className="camfx-title">Main shot {st.hold ? "(your pick)" : st.follow_talk ? "(follows whoever talks)" : "(stays put)"}</div>
+          <div className="camfx-row">
+            {chip(!st.hold, "Automatic", () => set({ hold: false, focus: null }), "Keeps the current shot; starts on a shared screen if there is one")}
+            {shots.map((s) => chip(!!st.hold && st.focus === s.key, s.label, () => set({ hold: true, focus: s.key })))}
+            {!shots.length && <span className="muted small">Nobody's on stage yet.</span>}
+          </div>
+          <label className="check" title="The main shot jumps to whoever is talking: their shared screen if they share one, otherwise their camera">
+            <input type="checkbox" checked={!!st.follow_talk} onChange={(e) => set({ follow_talk: e.target.checked, ...(e.target.checked ? { hold: false } : {}) })} /> Switch the main shot to whoever talks
+          </label>
+        </div>
+        <div className="director-side">
+          <div className="camfx-title">Layout</div>
+          <div className="camfx-row">
+            {chip(layout === "auto", "Main + pop-ups", () => set({ layout: "auto" }), "The main shot full screen, with small windows for people as they talk")}
+            {chip(layout === "screen", "Main + all faces", () => set({ layout: "screen" }), "The main shot with everyone's camera down the side")}
+            {chip(layout === "grid", "Grid", () => set({ layout: "grid" }), "Every camera and screen side by side")}
+          </div>
+          {layout === "auto" && (
+            <>
+              <div className="camfx-title">Pop-up windows</div>
+              <div className="camfx-row">
+                {chip(pip === "talker", "Latest talker", () => set({ pip: "talker" }), "One window that shows whoever spoke last")}
+                {chip(pip === "talkers", "Everyone talking", () => set({ pip: "talkers" }), "A window for each person while they talk, up to four")}
+                {chip(pip === "off", "Off", () => set({ pip: "off" }))}
+              </div>
+              {pip !== "off" && (
+                <>
+                  <div className="camfx-row">
+                    {(["tl", "tr", "bl", "br"] as const).map((c) => chip((st.pip_pos ?? "br") === c, { tl: "↖ Top left", tr: "↗ Top right", bl: "↙ Bottom left", br: "↘ Bottom right" }[c], () => set({ pip_pos: c })))}
+                  </div>
+                  <div className="camfx-row">
+                    {(["s", "m", "l"] as const).map((z) => chip((st.pip_size ?? "m") === z, { s: "Small", m: "Medium", l: "Large" }[z], () => set({ pip_size: z })))}
+                  </div>
+                </>
+              )}
+            </>
+          )}
+          <div className="camfx-title">Lower third</div>
+          <div className="row gap">
+            <input placeholder="Name / headline" value={lt.text} onChange={(e) => setLt({ ...lt, text: e.target.value })} />
+            <input placeholder="Second line" value={lt.sub} onChange={(e) => setLt({ ...lt, sub: e.target.value })} />
+          </div>
+          <div className="row gap">
+            <button className="btn small primary" onClick={() => set({ lower_third: lt.text ? lt : null })}>
+              Show
+            </button>
+            <button className="btn small" onClick={() => set({ lower_third: null })}>
+              Clear
+            </button>
+          </div>
+          <div className="camfx-title">Title bar</div>
+          <div className="row gap">
+            <input placeholder="Shown at the top" value={title} onChange={(e) => setTitle(e.target.value)} />
+            <button className="btn small primary" onClick={() => set({ title: title || null })}>
+              Show
+            </button>
+            <button className="btn small" onClick={() => set({ title: null })}>
+              Clear
+            </button>
+          </div>
+          <div className="camfx-title">Full-screen card</div>
+          <div className="row gap">
+            <input placeholder="e.g. Be right back" value={card} onChange={(e) => setCard(e.target.value)} />
+            <button className="btn small primary" onClick={() => set({ card: card || null })}>
+              Show
+            </button>
+            <button className="btn small" onClick={() => set({ card: null })}>
+              Clear
+            </button>
+          </div>
+          <div className="camfx-title">Share directing</div>
+          <div className="row gap">
+            <select value={handTo} onChange={(e) => setHandTo(e.target.value)}>
+              <option value="">Pick someone…</option>
+              {others.map((p) => (
+                <option key={p.identity} value={p.identity}>
+                  {name(p.identity)}
+                </option>
+              ))}
+            </select>
+            <button className="btn small" disabled={!handTo} onClick={() => post(channel.id, "role", { user_id: handTo, role: "host" }).then(() => toast(name(handTo) + " can direct too (they're a host now)"))}>
+              Make a host
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

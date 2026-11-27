@@ -88,10 +88,14 @@ ok(post(A, "role", {"user_id": y_id, "role": "none"}))
 print("moderators manage hands; hosts run it")
 
 # ---- the director
-ok(post(A, "director", {"layout": "spotlight", "focus": "screen:" + a_id, "follow_talk": True}))
-assert S(X)["director"] == {"layout": "spotlight", "focus": "screen:" + a_id, "follow_talk": True}
-ok(post(A, "director", {"layout": "weird"}))
-assert S(X)["director"]["layout"] == "auto"
+ok(post(A, "director", {"layout": "screen", "focus": "screen:" + a_id, "hold": True, "follow_talk": True, "pip": "talkers", "pip_pos": "tl", "pip_size": "l"}))
+assert S(X)["director"] == {"layout": "screen", "focus": "screen:" + a_id, "hold": True, "follow_talk": True, "pip": "talkers", "pip_pos": "tl", "pip_size": "l"}, S(X)["director"]
+ok(post(A, "director", {"lower_third": {"text": " Maya ", "sub": "Host"}, "title": "Friday Night Live", "card": "Be right back", "junk": 1}))
+d = S(X)["director"]
+assert d["lower_third"] == {"text": "Maya", "sub": "Host"} and d["title"] == "Friday Night Live" and d["card"] == "Be right back" and "junk" not in d and d["layout"] == "screen", d
+ok(post(A, "director", {"card": None, "title": "", "layout": "weird", "lower_third": {"text": ""}}))
+d = S(X)["director"]
+assert d["card"] is None and d["title"] is None and d["lower_third"] is None and d["layout"] == "auto" and d["focus"] == "screen:" + a_id, d
 
 # ---- ending: guests go back, hands go down
 ok(post(Y, "hand", {"up": True}))

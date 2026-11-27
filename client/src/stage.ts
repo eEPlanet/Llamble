@@ -15,7 +15,8 @@ export interface Stage {
   live_since: number | null;
   hands_open: boolean;
   audience: string;
-  director: { layout?: "auto" | "spotlight" | "grid"; focus?: string | null; follow_talk?: boolean };
+  /** the director's settings (the same as the recording director's: focus, hold, layout, pip, lower third, title, card) */
+  director: Record<string, any>;
   event_id: string | null;
   roles: StageRole[];
   hands: { user_id: string; at: number }[];
