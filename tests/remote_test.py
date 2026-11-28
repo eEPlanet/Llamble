@@ -52,6 +52,20 @@ if has_host:  # run_all.sh adds this name to /etc/hosts when it can
 r=remote(domain="nothing-here.invalid",ddns_provider="manual")
 assert r["status"]["ddns_state"]=="error" and "doesn't point anywhere" in r["status"]["ddns_error"], r["status"]
 assert requests.put(B+"/api/admin/remote",headers=T,json={"enabled":True,"mode":"direct","domain":"a.b.c","ddns_provider":"godaddy"}).status_code==400
+# other addresses: checked, cleaned up, saved, sent back; only the instance owner
+O=B+"/api/admin/remote/other"
+assert requests.put(O,headers=T,json={"other":[{"name":"wiki","to":"wiki:3000"}]}).status_code==400
+assert requests.put(O,headers=T,json={"other":[{"name":"wiki.llamble.test","to":"wiki"}]}).status_code==400
+own=requests.get(B+"/api/admin/remote",headers=T).json()["domain"]
+assert requests.put(O,headers=T,json={"other":[{"name":own,"to":"wiki:3000"}]}).status_code==400
+assert requests.put(O,headers=T,json={"other":[{"name":"a.llamble.test","to":"a:1"},{"name":"A.llamble.test","to":"a:2"}]}).status_code==400
+r=requests.put(O,headers=T,json={"other":[{"name":"https://Store.Llamble.test/","to":"http://Store:8100/"},{"name":"","to":""}]}); assert r.ok, r.text
+r=requests.get(B+"/api/admin/remote",headers=T).json(); assert r["other"]==[{"name":"store.llamble.test","to":"store:8100"}], r["other"]
+inv=requests.post(f"{B}/api/guilds/{s['guild_id']}/invites",headers=T,json={"max_uses":2}).json()["code"]
+u=requests.post(B+"/api/auth/register",json={"invite":inv,"username":"bo","password":"pass-word-123"}).json()
+assert requests.put(O,headers={"Authorization":"Bearer "+u["token"]},json={"other":[]}).status_code==403
+assert requests.put(O,headers=T,json={"other":[]}).ok and requests.get(B+"/api/admin/remote",headers=T).json()["other"]==[]
+print("other addresses: checked, saved, cleared")
 requests.put(B+"/api/admin/remote",headers=T,json={"enabled":False,"domain":""}); time.sleep(1.5)
 try:
     socket.create_connection(("127.0.0.1",8443),timeout=2); raise SystemExit("listener should be off")

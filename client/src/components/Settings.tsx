@@ -2236,6 +2236,57 @@ function RouterSteps({ router, nasIp, ports }: { router: string; nasIp: string; 
   );
 }
 
+/** Other addresses: extra names that come in through Llamble's HTTPS and go to another app. */
+function OtherAddresses({ saved, domain, onSaved }: { saved: { name: string; to: string }[]; domain: string; onSaved: () => void }) {
+  const [rows, setRows] = useState<{ name: string; to: string }[]>(saved);
+  const [busy, setBusy] = useState(false);
+  const key = JSON.stringify(saved);
+  useEffect(() => setRows(saved), [key]);
+  const dirty = JSON.stringify(rows.filter((x) => x.name || x.to)) !== key;
+  const set = (i: number, f: "name" | "to", v: string) => setRows(rows.map((x, k) => (k === i ? { ...x, [f]: v } : x)));
+  const save = async () => {
+    setBusy(true);
+    try {
+      await api("/api/admin/remote/other", { method: "PUT", body: { other: rows } });
+      toast("Saved. Getting certificates…");
+      onSaved();
+    } catch (e: any) {
+      toast(e.message, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const root = domain.split(".").slice(1).join(".") || "example.com";
+  return (
+    <div className="other-addrs">
+      <div className="bold">Other addresses</div>
+      <p className="muted small">
+        Run another app on this network? Give it its own address and it comes in through this same HTTPS port. Point the address at the same place as {domain} (a CNAME to {domain} works), then say where it goes inside your network.
+      </p>
+      {rows.map((x, i) => (
+        <div className="row gap other-row" key={i}>
+          <input value={x.name} onChange={(e) => set(i, "name", e.target.value)} placeholder={`wiki.${root}`} />
+          <span className="muted">→</span>
+          <input value={x.to} onChange={(e) => set(i, "to", e.target.value)} placeholder="app-name:3000" />
+          <button className="btn small" onClick={() => setRows(rows.filter((_, k) => k !== i))} aria-label="Remove">
+            Remove
+          </button>
+        </div>
+      ))}
+      <div className="row gap">
+        <button className="btn small" onClick={() => setRows([...rows, { name: "", to: "" }])}>
+          Add address
+        </button>
+        {dirty && (
+          <button className="btn small primary" disabled={busy} onClick={save}>
+            Save
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function RemoteAccess() {
   const [r, setR] = useState<any>(null);
   const [mode, setMode] = useState<"off" | "direct" | "relay">("off");
@@ -2487,6 +2538,7 @@ function RemoteAccess() {
                 ✅ People outside can now use <b>https://{r.domain}</b> in the app or a browser (Chromebooks too). New invites use this address.
               </p>
               <RequireHttps domain={r.domain} />
+              <OtherAddresses saved={r.other || []} domain={r.domain} onSaved={load} />
             </>
           ) : (
             <div className="row gap">

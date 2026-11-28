@@ -48,7 +48,22 @@ pub struct RemoteConfig {
     /// relay mode: shared secret, generated here, pasted into the VPS command
     #[serde(default)]
     pub relay_token: String,
+    /// other addresses that come in through this HTTPS port and get passed to another
+    /// app on the same network (e.g. wiki.example.com -> wiki:3000). Each gets a certificate.
+    #[serde(default)]
+    pub other: Vec<OtherAddr>,
 }
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct OtherAddr {
+    /// host name visitors use, e.g. wiki.example.com
+    pub name: String,
+    /// where to send them inside the network: host:port (plain HTTP)
+    pub to: String,
+}
+
+/// the other addresses the running HTTPS listener passes along
+static OTHER: RwLock<Vec<OtherAddr>> = RwLock::const_new(Vec::new());
 
 impl Default for RemoteConfig {
     fn default() -> Self {
@@ -62,6 +77,7 @@ impl Default for RemoteConfig {
             mode: default_mode(),
             relay_addr: String::new(),
             relay_token: String::new(),
+            other: Vec::new(),
         }
     }
 }
@@ -321,7 +337,11 @@ async fn start_https(state: &Shared, c: &RemoteConfig) {
     let Some(app) = APP.get().cloned() else { return };
     let cache = state.cfg.data_dir.join("acme");
     let staging = std::env::var("LLAMBLE_ACME_STAGING").is_ok();
-    let mut acme = rustls_acme::AcmeConfig::new([c.domain.clone()])
+    let mut names = vec![c.domain.clone()];
+    names.extend(c.other.iter().map(|o| o.name.clone()).filter(|n| *n != c.domain));
+    *OTHER.write().await = c.other.clone();
+    let app = app.layer(axum::middleware::from_fn(pass_other));
+    let mut acme = rustls_acme::AcmeConfig::new(names.clone())
         .cache(rustls_acme::caches::DirCache::new(cache))
         .directory_lets_encrypt(!staging);
     if !c.email.trim().is_empty() {
@@ -356,11 +376,31 @@ async fn start_https(state: &Shared, c: &RemoteConfig) {
     *state.remote.server.lock().await = Some(handle.clone());
     let addr = std::net::SocketAddr::from(([0, 0, 0, 0], HTTPS_PORT));
     tokio::spawn(async move {
-        if let Err(e) = axum_server::bind(addr).acceptor(acceptor).handle(handle).serve(app.into_make_service_with_connect_info::<std::net::SocketAddr>()).await {
+        // the listener being replaced may still hold the port for a moment while it closes
+        let mut tries = 0;
+        let listener = loop {
+            match std::net::TcpListener::bind(addr) {
+                Ok(l) => break l,
+                Err(e) if tries < 60 => {
+                    tries += 1;
+                    if tries == 1 {
+                        tracing::info!("waiting for port {HTTPS_PORT}: {e}");
+                    }
+                    tokio::time::sleep(Duration::from_millis(250)).await;
+                }
+                Err(e) => {
+                    tracing::error!("https listener failed: {e}");
+                    return;
+                }
+            }
+        };
+        let _ = listener.set_nonblocking(true);
+        let server = axum_server::from_tcp(listener);
+        if let Err(e) = server.acceptor(acceptor).handle(handle).serve(app.into_make_service_with_connect_info::<std::net::SocketAddr>()).await {
             tracing::error!("https listener failed: {e}");
         }
     });
-    tracing::info!("HTTPS listening on :{HTTPS_PORT} for {}", c.domain);
+    tracing::info!("HTTPS listening on :{HTTPS_PORT} for {}", names.join(", "));
 }
 
 /// Called once at startup with the full app router (so HTTPS serves the same routes).
@@ -499,6 +539,7 @@ pub async fn get_remote(State(state): State<Shared>, auth: AuthUser) -> ApiResul
         "ddns_provider": c.ddns_provider,
         "has_ddns_secret": !c.ddns_password.is_empty() || !c.ddns_url.is_empty(),
         "relay_addr": c.relay_addr,
+        "other": c.other,
         "relay_command": relay_command,
         "status": *state.remote.status.read().await,
         "voice": crate::voice_server::status_json(&state).await,
@@ -596,6 +637,119 @@ pub async fn set_remote(State(state): State<Shared>, auth: AuthUser, Json(req): 
     Ok(Json(json!({ "ok": true })))
 }
 
+// ---------- other addresses: pass visitors for those names to another app ----------
+
+const HOP: [&str; 9] = ["connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "proxy-connection", "te", "trailer", "transfer-encoding", "upgrade"];
+
+fn other_client() -> &'static reqwest::Client {
+    static C: OnceLock<reqwest::Client> = OnceLock::new();
+    // redirects go back to the visitor untouched (sign-in pages rely on them)
+    C.get_or_init(|| reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).connect_timeout(Duration::from_secs(10)).build().unwrap())
+}
+
+fn host_of(req: &Request) -> String {
+    let h = req.uri().host().map(str::to_string).or_else(|| req.headers().get("host").and_then(|v| v.to_str().ok()).map(str::to_string)).unwrap_or_default();
+    h.split(':').next().unwrap_or("").trim_end_matches('.').to_lowercase()
+}
+
+/// Middleware on the HTTPS listener: requests for one of the other addresses go to its app;
+/// everything else is Llamble as usual.
+async fn pass_other(req: Request, next: axum::middleware::Next) -> Response {
+    let host = host_of(&req);
+    let to = OTHER.read().await.iter().find(|o| o.name == host).map(|o| o.to.clone());
+    match to {
+        Some(to) => forward(req, &host, &to).await,
+        None => next.run(req).await,
+    }
+}
+
+async fn forward(req: Request, host: &str, to: &str) -> Response {
+    let peer = req.extensions().get::<axum::extract::ConnectInfo<std::net::SocketAddr>>().map(|c| c.0.ip().to_string());
+    let (parts, body) = req.into_parts();
+    let path = parts.uri.path_and_query().map(|p| p.as_str()).unwrap_or("/");
+    let url = format!("http://{to}{path}");
+    let mut rb = other_client().request(parts.method.clone(), &url);
+    for (k, v) in parts.headers.iter() {
+        let n = k.as_str();
+        if n == "host" || HOP.contains(&n) || n.starts_with("x-forwarded-") {
+            continue;
+        }
+        rb = rb.header(k, v);
+    }
+    rb = rb.header("host", host).header("x-forwarded-host", host).header("x-forwarded-proto", "https");
+    if let Some(ip) = peer {
+        rb = rb.header("x-forwarded-for", ip);
+    }
+    rb = rb.body(reqwest::Body::wrap_stream(body.into_data_stream()));
+    match rb.send().await {
+        Ok(r) => {
+            let mut out = Response::builder().status(StatusCode::from_u16(r.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY));
+            for (k, v) in r.headers().iter() {
+                if !HOP.contains(&k.as_str()) {
+                    out = out.header(k, v);
+                }
+            }
+            out.body(Body::from_stream(r.bytes_stream())).unwrap_or_else(|_| StatusCode::BAD_GATEWAY.into_response())
+        }
+        Err(e) => {
+            tracing::warn!("other address {host}: can't reach {to}: {e}");
+            (StatusCode::BAD_GATEWAY, format!("{host} isn't answering right now")).into_response()
+        }
+    }
+}
+
+fn valid_name(n: &str) -> bool {
+    n.contains('.') && n.len() <= 253 && n.split('.').all(|p| !p.is_empty() && p.len() <= 63 && p.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '-'))
+}
+
+/// "app:8100", "http://app:8100/" or "192.168.1.5:3000" -> "app:8100"
+fn clean_target(t: &str) -> Option<String> {
+    let t = t.trim().trim_start_matches("http://").trim_end_matches('/');
+    let (h, port) = t.rsplit_once(':')?;
+    let port: u16 = port.parse().ok()?;
+    let host_ok = !h.is_empty() && h.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '.' || ch == '_');
+    (host_ok && port > 0).then(|| format!("{}:{port}", h.to_lowercase()))
+}
+
+#[derive(Deserialize)]
+pub struct SetOther {
+    pub other: Vec<OtherAddr>,
+}
+
+pub async fn set_other(State(state): State<Shared>, auth: AuthUser, Json(req): Json<SetOther>) -> ApiResult<Json<Value>> {
+    if !auth.is_master {
+        return Err(AppError::forbidden());
+    }
+    let mut c = load(&state).await;
+    let mut list: Vec<OtherAddr> = Vec::new();
+    for o in req.other {
+        let name = o.name.trim().trim_start_matches("https://").trim_start_matches("http://").trim_end_matches('/').to_lowercase();
+        if name.is_empty() && o.to.trim().is_empty() {
+            continue;
+        }
+        if !valid_name(&name) {
+            return Err(AppError::bad(format!("\"{name}\" isn't an address like wiki.example.com")));
+        }
+        if name == c.domain {
+            return Err(AppError::bad("that's this server's own address"));
+        }
+        if list.iter().any(|x| x.name == name) {
+            return Err(AppError::bad(format!("{name} is listed twice")));
+        }
+        let to = clean_target(&o.to).ok_or_else(|| AppError::bad(format!("for {name}, enter where it goes like app:8100")))?;
+        list.push(OtherAddr { name, to });
+    }
+    if list.len() > 20 {
+        return Err(AppError::bad("up to 20 other addresses"));
+    }
+    if list != c.other {
+        c.other = list;
+        save(&state, &c).await?;
+        state.remote.kick.notify_one();
+    }
+    Ok(Json(json!({ "ok": true, "other": c.other })))
+}
+
 // ---------- LiveKit signaling proxy: /livekit/... -> LiveKit server ----------
 
 
@@ -663,6 +817,70 @@ pub async fn livekit_proxy(State(state): State<Shared>, Path(rest): Path<String>
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn other_addresses_pass_through() {
+        use axum::routing::{get, post};
+        use tower::ServiceExt;
+        // the "other app": echoes what it got, redirects, sets a cookie
+        let up = Router::new()
+            .route("/hello", get(|h: HeaderMap| async move { format!("other app; host={}; proto={}", h["host"].to_str().unwrap(), h["x-forwarded-proto"].to_str().unwrap()) }))
+            .route("/signin", post(|body: String| async move { Response::builder().status(303).header("location", "/library").header("set-cookie", "s=1; Path=/").body(Body::from(format!("got {} bytes", body.len()))).unwrap() }))
+            .route("/cookie", get(|h: HeaderMap| async move { h.get("cookie").map(|v| v.to_str().unwrap().to_string()).unwrap_or_default() }))
+            .layer(axum::extract::DefaultBodyLimit::disable());
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = l.local_addr().unwrap().port();
+        tokio::spawn(async move { axum::serve(l, up).await.unwrap() });
+        *OTHER.write().await = vec![OtherAddr { name: "store.example.com".into(), to: format!("127.0.0.1:{port}") }, OtherAddr { name: "down.example.com".into(), to: "127.0.0.1:1".into() }];
+        let app = Router::new().fallback(|| async { "llamble" }).layer(axum::middleware::from_fn(pass_other));
+        let call = |host: &'static str, method: &'static str, path: &'static str, body: Vec<u8>, cookie: Option<&'static str>| {
+            let app = app.clone();
+            async move {
+                let mut b = axum::http::Request::builder().method(method).uri(path).header("host", host);
+                if let Some(c) = cookie {
+                    b = b.header("cookie", c);
+                }
+                let r = app.oneshot(b.body(Body::from(body)).unwrap()).await.unwrap();
+                let st = r.status().as_u16();
+                let hd = r.headers().clone();
+                let txt = String::from_utf8(axum::body::to_bytes(r.into_body(), usize::MAX).await.unwrap().to_vec()).unwrap();
+                (st, hd, txt)
+            }
+        };
+        // Llamble's own address (and anything unknown) stays Llamble
+        assert_eq!(call("chat.example.com", "GET", "/hello", vec![], None).await.2, "llamble");
+        // the other address goes to the other app, with its own name and https
+        let (st, _, txt) = call("store.example.com", "GET", "/hello", vec![], None).await;
+        assert_eq!((st, txt.as_str()), (200, "other app; host=store.example.com; proto=https"));
+        // a port or capitals in the name still match
+        assert_eq!(call("Store.Example.com:443", "GET", "/hello", vec![], None).await.0, 200);
+        // redirects come back untouched (not followed), cookies both ways, big bodies stream
+        let (st, hd, txt) = call("store.example.com", "POST", "/signin", vec![7u8; 3_000_000], None).await;
+        assert_eq!(st, 303);
+        assert_eq!(hd["location"], "/library");
+        assert_eq!(hd["set-cookie"], "s=1; Path=/");
+        assert_eq!(txt, "got 3000000 bytes");
+        assert_eq!(call("store.example.com", "GET", "/cookie", vec![], Some("s=1")).await.2, "s=1");
+        // an app that's down gives a plain error, not Llamble
+        let (st, _, txt) = call("down.example.com", "GET", "/", vec![], None).await;
+        assert_eq!(st, 502);
+        assert!(txt.contains("isn't answering"));
+        *OTHER.write().await = Vec::new();
+        assert_eq!(call("store.example.com", "GET", "/hello", vec![], None).await.2, "llamble");
+    }
+
+    #[test]
+    fn other_targets() {
+        assert_eq!(clean_target("store:8100").as_deref(), Some("store:8100"));
+        assert_eq!(clean_target("http://Store:8100/").as_deref(), Some("store:8100"));
+        assert_eq!(clean_target("192.168.1.5:3000").as_deref(), Some("192.168.1.5:3000"));
+        assert_eq!(clean_target("store"), None);
+        assert_eq!(clean_target("store:0"), None);
+        assert_eq!(clean_target("st ore:80"), None);
+        assert!(valid_name("wiki.example.com"));
+        assert!(!valid_name("wiki"));
+        assert!(!valid_name("wiki..example.com"));
+    }
+
     #[test]
     fn domains() {
         assert_eq!(split_domain("chat.llamble.com"), ("chat".into(), "llamble.com".into()));
