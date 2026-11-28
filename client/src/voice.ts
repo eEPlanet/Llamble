@@ -695,6 +695,18 @@ async function connect(channelId: string, rejoining: boolean) {
   bump();
 }
 
+// A plain browser tab being closed (not hidden or switched away from: that keeps the call) hangs
+// up right away, instead of everyone seeing you "in" the call until the voice server notices.
+// The desktop and Android apps keep their own calls going, so this is only for browsers.
+if (typeof window !== "undefined" && !window.llambleNative && !isAndroidApp) {
+  window.addEventListener("pagehide", (e) => {
+    if ((e as PageTransitionEvent).persisted || !room) return;
+    const r = room;
+    api("/api/voice/leave", { method: "POST", keepalive: true }).catch(() => {});
+    r.disconnect().catch(() => {});
+  });
+}
+
 export async function leaveVoice(notify = true) {
   voiceHooks.leave?.();
   wanted = null;

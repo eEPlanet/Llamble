@@ -51,7 +51,7 @@ export const apiHooks: {
   upload?: (file: File | Blob, name: string, onProgress?: (p: number) => void) => Promise<FileObj> | undefined;
 } = {};
 
-export async function api<T = any>(path: string, opts: { method?: string; body?: unknown; server?: string; token?: string | null } = {}): Promise<T> {
+export async function api<T = any>(path: string, opts: { method?: string; body?: unknown; server?: string; token?: string | null; keepalive?: boolean } = {}): Promise<T> {
   if (apiHooks.api && !opts.server) {
     const r = apiHooks.api(path, opts);
     if (r) return r;
@@ -68,6 +68,8 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
       method: opts.method || (opts.body !== undefined ? "POST" : "GET"),
       headers,
       body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+      // still sent if the page is closing
+      keepalive: opts.keepalive,
     });
   } catch {
     throw new ApiError(0, "Can't reach the server");

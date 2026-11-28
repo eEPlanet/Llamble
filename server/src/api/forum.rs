@@ -47,7 +47,59 @@ pub async fn migrate(pool: &sqlx::SqlitePool) -> anyhow::Result<()> {
     )
     .execute(pool)
     .await?;
+    // how far each person has read each post (its newest message they've seen). A post with
+    // nothing newer than this, or than the space's own read mark ("Mark all read"), is read.
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS forum_reads (
+            post_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+            user_id TEXT NOT NULL,
+            last_seen_id TEXT NOT NULL,
+            PRIMARY KEY (post_id, user_id)
+        )",
+    )
+    .execute(pool)
+    .await?;
     Ok(())
+}
+
+/// SQL: the newest message in post `f` (the post or its newest reply).
+const LATEST: &str = "(SELECT MAX(x) FROM (SELECT f.message_id AS x UNION ALL SELECT r.message_id FROM forum_items r WHERE r.thread_id = f.message_id))";
+/// SQL: how far person ?3 has read post `f` in space ?1.
+const SEEN: &str = "MAX(COALESCE((SELECT fr.last_seen_id FROM forum_reads fr WHERE fr.post_id = f.message_id AND fr.user_id = ?3), ''), COALESCE((SELECT rs.last_read_id FROM read_states rs WHERE rs.user_id = ?3 AND rs.channel_id = ?1), ''))";
+
+async fn mark_seen(state: &Shared, uid: &str, pid: &str, upto: &str) {
+    let _ = sqlx::query(
+        "INSERT INTO forum_reads (post_id, user_id, last_seen_id) VALUES (?,?,?)
+         ON CONFLICT(post_id, user_id) DO UPDATE SET last_seen_id = MAX(last_seen_id, excluded.last_seen_id)",
+    )
+    .bind(pid)
+    .bind(uid)
+    .bind(upto)
+    .execute(&state.db)
+    .await;
+}
+
+/// The space's own read mark, moved up to its newest message (the white dot goes away).
+async fn read_space(state: &Shared, uid: &str, cid: &str) {
+    let last: Option<String> = sqlx::query_scalar("SELECT MAX(id) FROM messages WHERE channel_id = ?").bind(cid).fetch_one(&state.db).await.ok().flatten();
+    let Some(last) = last else { return };
+    let _ = sqlx::query(
+        "INSERT INTO read_states (user_id, channel_id, last_read_id) VALUES (?,?,?)
+         ON CONFLICT(user_id, channel_id) DO UPDATE SET last_read_id = MAX(last_read_id, excluded.last_read_id)",
+    )
+    .bind(uid)
+    .bind(cid)
+    .bind(&last)
+    .execute(&state.db)
+    .await;
+    state.hub.send_user(uid, "READ_STATE_UPDATE", &json!({ "channel_id": cid, "last_read_id": last }));
+    crate::api::notifications::read_mentions_upto(state, uid, cid, &last).await;
+}
+
+/// Unread posts left for this person in this space.
+async fn unread_left(state: &Shared, uid: &str, cid: &str) -> i64 {
+    let sql = format!("SELECT COUNT(*) FROM forum_items f WHERE f.channel_id = ?1 AND f.thread_id IS NULL AND ?2 = ?2 AND {LATEST} > {SEEN}");
+    sqlx::query_scalar(&sql).bind(cid).bind("").bind(uid).fetch_one(&state.db).await.unwrap_or(0)
 }
 
 /// What a forum message carries besides the message itself (from the create request).
@@ -152,6 +204,11 @@ pub async fn parts(state: &Shared, mid: &str) -> Option<Value> {
 /// After a forum message is created: the writer of a post follows it; a reply tells the
 /// post's followers (other than the writer, and whoever was replied to, who already hears).
 pub async fn created(state: &Shared, ch: &Channel, mid: &str, author: &str, f: &ForumOk, replied_to: Option<&str>, preview: &str) {
+    mark_seen(state, author, f.thread_id.as_deref().unwrap_or(mid), mid).await;
+    // nothing else unread for them here: the space stays read (their own post doesn't light it)
+    if unread_left(state, author, &ch.id).await == 0 {
+        read_space(state, author, &ch.id).await;
+    }
     match &f.thread_id {
         None => {
             let _ = sqlx::query("INSERT OR IGNORE INTO forum_follows (post_id, user_id) VALUES (?,?)").bind(mid).bind(author).execute(&state.db).await;
@@ -194,7 +251,7 @@ pub async fn delete_thread(state: &Shared, mid: &str) {
 
 #[derive(Deserialize)]
 pub struct ListQ {
-    /// all | unanswered | solved | following | media (posts with pictures or videos)
+    /// all | unread | unanswered | solved | following | media (posts with pictures or videos)
     pub filter: Option<String>,
     pub tag: Option<String>,
     /// posts older than this message id (paging)
@@ -209,7 +266,17 @@ async fn post_card(state: &Shared, uid: &str, mid: &str) -> Option<Value> {
     let likes: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM reactions WHERE message_id = ? AND emoji = ?").bind(mid).bind(LIKE).fetch_one(&state.db).await.unwrap_or(0);
     let liked = sqlx::query_scalar::<_, i64>("SELECT 1 FROM reactions WHERE message_id = ? AND emoji = ? AND user_id = ?").bind(mid).bind(LIKE).bind(uid).fetch_optional(&state.db).await.ok().flatten().is_some();
     let following = sqlx::query_scalar::<_, i64>("SELECT 1 FROM forum_follows WHERE post_id = ? AND user_id = ?").bind(mid).bind(uid).fetch_optional(&state.db).await.ok().flatten().is_some();
+    let unread = sqlx::query_scalar::<_, i64>(&format!("SELECT 1 FROM forum_items f WHERE f.message_id = ?2 AND f.channel_id = ?1 AND {LATEST} > {SEEN}"))
+        .bind(&m.channel_id)
+        .bind(mid)
+        .bind(uid)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .is_some();
     let mut v = serde_json::to_value(&m).ok()?;
+    v["unread"] = json!(unread);
     v["forum"] = f;
     v["reply_count"] = json!(replies);
     v["last_activity"] = json!(last.unwrap_or(m.created_at));
@@ -222,7 +289,9 @@ async fn post_card(state: &Shared, uid: &str, mid: &str) -> Option<Value> {
 /// GET /api/channels/{cid}/forum: the posts, newest first.
 pub async fn list(State(state): State<Shared>, auth: AuthUser, Path(cid): Path<String>, Query(q): Query<ListQ>) -> ApiResult<Json<Value>> {
     let ch = forum_channel(&state, &cid, &auth).await?;
+    let unread_sql = format!(" AND {LATEST} > {SEEN}");
     let filter = match q.filter.as_deref().unwrap_or("all") {
+        "unread" => unread_sql.as_str(),
         "unanswered" => " AND NOT EXISTS (SELECT 1 FROM forum_items r WHERE r.thread_id = f.message_id)",
         "solved" => " AND f.best_reply_id IS NOT NULL",
         "media" => " AND EXISTS (SELECT 1 FROM message_attachments ma JOIN files fl ON fl.id = ma.file_id WHERE ma.message_id = f.message_id AND (fl.mime LIKE 'image/%' OR fl.mime LIKE 'video/%'))",
@@ -283,10 +352,57 @@ pub async fn thread(State(state): State<Shared>, auth: AuthUser, Path((cid, pid)
     // opening a post reads its reply notifications
     let mut ids_read = vec![pid.clone()];
     ids_read.extend(replies.iter().filter_map(|r| r["id"].as_str().map(String::from)));
+    let newest = ids_read.iter().max().cloned().unwrap_or_else(|| pid.clone());
     for id in ids_read {
         crate::api::notifications::read_ref(&state, &auth.id, &id).await;
     }
+    // you've read this post now; with nothing else unread here, the space is read too
+    mark_seen(&state, &auth.id, &pid, &newest).await;
+    if unread_left(&state, &auth.id, &ch.id).await == 0 {
+        read_space(&state, &auth.id, &ch.id).await;
+    }
     Ok(Json(json!({ "post": post, "replies": replies })))
+}
+
+/// POST /api/channels/{cid}/forum/read: mark every post in this forum read.
+pub async fn read_all(State(state): State<Shared>, auth: AuthUser, Path(cid): Path<String>) -> ApiResult<Json<Value>> {
+    let ch = forum_channel(&state, &cid, &auth).await?;
+    read_space(&state, &auth.id, &ch.id).await;
+    // their reply notifications here are read too
+    let ids: Vec<String> = sqlx::query_scalar("SELECT message_id FROM forum_items WHERE channel_id = ?").bind(&ch.id).fetch_all(&state.db).await.unwrap_or_default();
+    for id in ids {
+        crate::api::notifications::read_ref(&state, &auth.id, &id).await;
+    }
+    Ok(Json(json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+pub struct EditPost {
+    pub title: Option<String>,
+    pub tags: Option<Vec<String>>,
+}
+
+/// PATCH /api/forum/{pid} {title?, tags?}: the post's writer (or staff who can manage
+/// messages) changes its title or tags. The text itself is edited like any message.
+pub async fn edit(State(state): State<Shared>, auth: AuthUser, Path(pid): Path<String>, Json(req): Json<EditPost>) -> ApiResult<Json<Value>> {
+    let ch = post_channel(&state, &pid, &auth).await?;
+    let p = require_channel(&state.db, &ch, &auth.id, perms::VIEW).await?;
+    let author: String = sqlx::query_scalar("SELECT author_id FROM messages WHERE id = ?").bind(&pid).fetch_one(&state.db).await?;
+    if author != auth.id && p & perms::MANAGE_MESSAGES == 0 {
+        return Err(AppError::forbidden_msg("only the person who wrote it, or staff, can edit this post"));
+    }
+    if let Some(t) = &req.title {
+        let title: String = t.trim().chars().filter(|c| !c.is_control()).take(200).collect();
+        if title.is_empty() {
+            return Err(AppError::bad("a post needs a title"));
+        }
+        sqlx::query("UPDATE forum_items SET title = ? WHERE message_id = ?").bind(&title).bind(&pid).execute(&state.db).await?;
+    }
+    if let Some(t) = &req.tags {
+        sqlx::query("UPDATE forum_items SET tags = ? WHERE message_id = ?").bind(serde_json::to_string(&clean_tags(t)).unwrap_or_else(|_| "[]".into())).bind(&pid).execute(&state.db).await?;
+    }
+    state.emit_channel(&ch, "FORUM_BEST", &json!({ "channel_id": ch.id, "post_id": pid, "at": now_ms() })).await;
+    Ok(Json(json!({ "ok": true, "forum": parts(&state, &pid).await })))
 }
 
 /// PUT / DELETE /api/forum/{pid}/follow

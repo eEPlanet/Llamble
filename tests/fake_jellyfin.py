@@ -1,7 +1,7 @@
 # A tiny stand-in for a Jellyfin server, for tests: two libraries (Movies is shared, Home
 # Videos isn't), a movie with a text subtitle track, a series with an episode, posters,
 # a file stream that honors Range, and an HLS playlist with a relative part.
-import json, sys, re
+import json, sys, re, os, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 KEY = "test-jf-key"
@@ -15,6 +15,13 @@ ITEMS = {
                {"Type": "Subtitle", "Codec": "subrip", "Index": 2, "Language": "eng", "DisplayTitle": "English", "IsTextSubtitleStream": True, "IsDefault": True}]}]},
     "m2": {"Id": "m2", "Name": "Wide Film", "Type": "Movie", "ImageTags": {}, "parent": "movielib",
            "MediaSources": [{"Id": "m2", "Container": "mkv", "MediaStreams": [{"Type": "Video", "Codec": "hevc", "Index": 0}, {"Type": "Audio", "Codec": "dts", "Index": 1}]}]},
+    # a real little movie (FAKE_JF_VIDEO) with a slow subtitle track (FAKE_JF_SLOW_SUBS seconds),
+    # the way Jellyfin pulls subtitles out of a big MKV
+    "m3": {"Id": "m3", "Name": "Real Movie", "Type": "Movie", "RunTimeTicks": 1_200_000_000, "ImageTags": {}, "parent": "movielib",
+           "MediaSources": [{"Id": "m3", "Container": "webm", "MediaStreams": [
+               {"Type": "Video", "Codec": "vp8", "Index": 0}, {"Type": "Audio", "Codec": "opus", "Index": 1},
+               {"Type": "Subtitle", "Codec": "subrip", "Index": 2, "Language": "eng", "DisplayTitle": "English", "IsTextSubtitleStream": True, "IsDefault": True},
+               {"Type": "Subtitle", "Codec": "subrip", "Index": 3, "Language": "spa", "DisplayTitle": "Spanish", "IsTextSubtitleStream": True}]}]},
     "s1": {"Id": "s1", "Name": "A Show", "Type": "Series", "ImageTags": {"Primary": "y"}, "parent": "movielib"},
     "e1": {"Id": "e1", "Name": "Pilot", "Type": "Episode", "SeriesName": "A Show", "ParentIndexNumber": 1, "IndexNumber": 1, "parent": "s1",
            "MediaSources": [{"Id": "e1", "Container": "mp4", "MediaStreams": [{"Type": "Video", "Codec": "h264", "Index": 0}]}]},
@@ -35,17 +42,32 @@ def ancestors(i):
         p = ITEMS.get(p, {}).get("parent")
     return out
 
+if not os.environ.get("FAKE_JF_VIDEO"):
+    ITEMS.pop("m3")  # only for the player test
+REAL = open(os.environ["FAKE_JF_VIDEO"], "rb").read() if os.environ.get("FAKE_JF_VIDEO") else VIDEO
+STOPS = []      # "stop converting" calls (DELETE /Videos/ActiveEncodings)
+SUB_HITS = []   # subtitle tracks asked for
+
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
+    def do_DELETE(self):
+        path, _, q = self.path.partition("?")
+        if path == "/Videos/ActiveEncodings" and f'Token="{KEY}"' in self.headers.get("Authorization", ""):
+            STOPS.append(q); return self.send(204, b"")
+        self.send(404, {"error": path})
     def send(self, code, body, ctype="application/json", extra=None):
         b = body if isinstance(body, bytes) else json.dumps(body).encode()
         self.send_response(code); self.send_header("Content-Type", ctype); self.send_header("Content-Length", str(len(b)))
         for k, v in (extra or {}).items(): self.send_header(k, v)
         self.end_headers(); self.wfile.write(b)
     def do_GET(self):
+        if self.path.startswith("/_test"):
+            return self.send(200, {"stops": STOPS, "subs": SUB_HITS})
         if f'Token="{KEY}"' not in self.headers.get("Authorization", ""):
             return self.send(401, {"error": "no"})
         path, _, q = self.path.partition("?")
+        if path == "/_test":
+            return self.send(200, {"stops": STOPS, "subs": SUB_HITS})
         if path == "/Library/VirtualFolders":
             return self.send(200, [{"Name": "Movies", "ItemId": "movielib", "CollectionType": "movies"}, {"Name": "Home Videos", "ItemId": "homelib", "CollectionType": "homevideos"},
                                    {"Name": "Collections", "ItemId": "boxlib", "CollectionType": "boxsets"}, {"Name": "More Movies", "ItemId": "morelib", "CollectionType": "movies"}])
@@ -81,18 +103,23 @@ class H(BaseHTTPRequestHandler):
         m = re.match(r"^/Videos/(\w+)/stream$", path)
         if m and "MediaSourceId=" not in q: return self.send(404, {"error": "no media source"})
         if m:
+            data, ctype = (REAL, "video/webm") if m.group(1) == "m3" else (VIDEO, "video/mp4")
             r = self.headers.get("Range")
             if r:
                 a, b = r.replace("bytes=", "").split("-")
-                a, b = int(a), int(b) if b else len(VIDEO) - 1
-                return self.send(206, VIDEO[a:b + 1], "video/mp4", {"Content-Range": f"bytes {a}-{b}/{len(VIDEO)}", "Accept-Ranges": "bytes"})
-            return self.send(200, VIDEO, "video/mp4", {"Accept-Ranges": "bytes"})
+                a, b = int(a), int(b) if b else len(data) - 1
+                b = min(b, len(data) - 1)
+                return self.send(206, data[a:b + 1], ctype, {"Content-Range": f"bytes {a}-{b}/{len(data)}", "Accept-Ranges": "bytes"})
+            return self.send(200, data, ctype, {"Accept-Ranges": "bytes"})
         m = re.match(r"^/Videos/(\w+)/master\.m3u8$", path)
         if m: return self.send(200, b"#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000\nmain.m3u8?x=1\n", "application/vnd.apple.mpegurl")
         m = re.match(r"^/Videos/(\w+)/hls1/main/0\.ts$", path)
         if m: return self.send(200, b"TSPART", "video/mp2t")
         m = re.match(r"^/Videos/(\w+)/(\w+)/Subtitles/(\d+)/0/Stream\.vtt$", path)
-        if m: return self.send(200, b"WEBVTT\n\n00:00.000 --> 00:02.000\nHello\n", "text/vtt")
+        if m:
+            SUB_HITS.append(m.group(3))
+            if m.group(1) == "m3": time.sleep(float(os.environ.get("FAKE_JF_SLOW_SUBS", "0")))
+            return self.send(200, b"WEBVTT\n\n00:00.000 --> 00:02.000\nHello\n", "text/vtt")
         self.send(404, {"error": path})
 
 if __name__ == "__main__":

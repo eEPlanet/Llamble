@@ -328,17 +328,41 @@ pub async fn session(State(state): State<Shared>, auth: AuthUser, Path(id): Path
         "container": container,
         "plan": if direct { "direct" } else { plan },
     });
+    let play_session = crate::error::new_id();
     Ok(Json(json!({
         "id": id,
         "title": item_brief(&v)["title"],
+        "play_session_id": play_session,
         "duration_ms": v["RunTimeTicks"].as_i64().map(|t| t / 10_000),
         "media_source_id": src["Id"].as_str().unwrap_or(&id),
         "direct": direct,
         "hls": format!("/api/watch/jf/{}/{id}/hls/master.m3u8?MediaSourceId={}&{video_args}&AudioCodec=aac&AllowAudioStreamCopy=true&TranscodingMaxAudioChannels=2&MinSegments=1&BreakOnNonKeyFrames=true&DeviceId=llamble-{}&PlaySessionId={}",
-            path_token(&state, &auth.id, &id), src["Id"].as_str().unwrap_or(&id), auth.id, crate::error::new_id()),
+            path_token(&state, &auth.id, &id), src["Id"].as_str().unwrap_or(&id), auth.id, play_session),
         "subs": subs,
         "info": info,
     })))
+}
+
+#[derive(Deserialize)]
+pub struct StopQ {
+    pub play: String,
+}
+
+/// DELETE /api/watch/jellyfin/session?play=… — this person stopped watching (left, skipped, next
+/// movie): Jellyfin can stop converting for them now instead of running on in the background.
+pub async fn stop(State(state): State<Shared>, auth: AuthUser, Query(q): Query<StopQ>) -> ApiResult<Json<Value>> {
+    let j = jf(&state).ok_or_else(not_set)?;
+    if q.play.is_empty() || !q.play.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return Err(AppError::bad("bad play session"));
+    }
+    let r = client()
+        .delete(format!("{}/Videos/ActiveEncodings", j.url))
+        .query(&[("deviceId", format!("llamble-{}", auth.id)), ("playSessionId", q.play.clone())])
+        .header("Authorization", auth_header(&j.key))
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await;
+    Ok(Json(json!({ "ok": r.map(|r| r.status().is_success()).unwrap_or(false) })))
 }
 
 /// Pass a Jellyfin response through (keeping what the player needs for seeking).

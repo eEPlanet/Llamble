@@ -201,8 +201,12 @@ pub async fn create_message(State(state): State<Shared>, auth: AuthUser, Path(ci
         sqlx::query("INSERT OR IGNORE INTO message_attachments (message_id, file_id, position, spoiler) VALUES (?,?,?,?)")
             .bind(&id).bind(&a.id).bind(i as i64).bind(a.spoiler).execute(&mut *tx).await?;
     }
-    sqlx::query("INSERT OR REPLACE INTO read_states (user_id, channel_id, last_read_id) VALUES (?,?,?)")
-        .bind(&auth.id).bind(&cid).bind(&id).execute(&mut *tx).await?;
+    // sending means you've read the chat up to here; a forum is read post by post instead
+    // (writing one post isn't reading all the others), see forum::created
+    if ch.kind != "forum" {
+        sqlx::query("INSERT OR REPLACE INTO read_states (user_id, channel_id, last_read_id) VALUES (?,?,?)")
+            .bind(&auth.id).bind(&cid).bind(&id).execute(&mut *tx).await?;
+    }
     let can_transcribe = crate::voicebot::can_transcribe(&state).await;
     if let Some(v) = &req.voice {
         let about = v.about.as_deref().map(|a| a.trim().chars().take(80).collect::<String>()).filter(|a| !a.is_empty());

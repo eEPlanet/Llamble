@@ -189,6 +189,7 @@ function Player({ cid, st, full, onFull, fullChat, onFullChat }: { cid: string; 
   );
 
   const act = (action: string, extra: any = {}) => watchAction(cid, "/control", { action, ...extra }).catch((e) => toast(e.message, "error"));
+  const retry = usePlayerTrouble((s) => s.failed[cid]);
 
   if (!item) {
     return (
@@ -218,10 +219,17 @@ function Player({ cid, st, full, onFull, fullChat, onFullChat }: { cid: string; 
         {item.kind !== "device" && <Progress cid={cid} st={st} mayRun={mayRun} onSeek={(ms) => act("seek", { pos_ms: ms })} />}
         <div className="watch-controls">
           {mayRun && item.kind !== "device" && <SeekButton cid={cid} itemId={item.id} dir={-1} onSeek={(ms) => act("seek", { pos_ms: ms })} />}
-          {mayRun && item.kind !== "device" && (
-            <button className="btn small" onClick={() => act(now!.playing ? "pause" : "play", { pos_ms: Math.round(targetMs(cid) || 0) })}>
-              {now!.playing ? "⏸ Pause" : "▶ Play"}
+          {retry ? (
+            <button className="btn small primary" onClick={retry} title="The video didn't load on this device">
+              ↻ Try again
             </button>
+          ) : (
+            mayRun &&
+            item.kind !== "device" && (
+              <button className="btn small" onClick={() => act(now!.playing ? "pause" : "play", { pos_ms: Math.round(targetMs(cid) || 0) })}>
+                {now!.playing ? "⏸ Pause" : "▶ Play"}
+              </button>
+            )
           )}
           {mayRun && item.kind !== "device" && <SeekButton cid={cid} itemId={item.id} dir={1} onSeek={(ms) => act("seek", { pos_ms: ms })} />}
           {mayRun ? (
@@ -479,9 +487,13 @@ interface Source {
   src: string;
   /** converted (HLS) playback to fall back to if the file won't play as it is */
   fallback?: string;
-  subs: { url: string; label: string; lang?: string; on?: boolean }[];
+  /** subtitle tracks; each is fetched only when it's turned on (pulling subtitles out of a
+   * big file can take Jellyfin a long time, and the movie shouldn't wait for that) */
+  subs: { path: string; label: string; lang?: string; on?: boolean }[];
   /** what the file is and how it's being sent (Jellyfin), for Stream info */
   info?: { file?: string; codec?: string; width?: number; height?: number; bitrate?: number; container?: string; plan?: string };
+  /** Jellyfin's play session: told to stop converting when this player goes away */
+  playSession?: string;
 }
 
 let libraryCache: Promise<any> | null = null;
@@ -511,68 +523,132 @@ async function resolveSource(item: WatchItem): Promise<Source> {
   if (item.kind === "library") {
     const lib = await libraryList().catch(() => ({ movies: [] }));
     const m = (lib.movies || []).find((x: any) => x.file_id === item.src);
-    const subs = m?.subs_file_id ? [{ url: await vttBlob(`/api/files/${m.subs_file_id}`).catch(() => ""), label: "Subtitles" }].filter((x) => x.url) : [];
-    return { src: media(`/api/files/${item.src}`), subs };
+    return { src: media(`/api/files/${item.src}`), subs: m?.subs_file_id ? [{ path: `/api/files/${m.subs_file_id}`, label: "Subtitles", on: true }] : [] };
   }
   // Jellyfin (telling it whether this device plays HEVC itself, so 4K isn't converted)
   const s = await api(`/api/watch/jellyfin/${item.src}/session${canHevc() ? "?hevc=1" : ""}`, { method: "POST" });
   const hls = session.server + s.hls;
-  const subs = [];
-  for (const t of s.subs || []) {
-    const url = await vttBlob(`/api/watch/jellyfin/${item.src}/subs/${t.index}?source=${encodeURIComponent(s.media_source_id)}`).catch(() => "");
-    if (url) subs.push({ url, label: t.label, lang: t.lang || undefined, on: !!t.default });
-  }
-  return s.direct ? { src: media(`/api/watch/jellyfin/${item.src}/stream?source=${encodeURIComponent(s.media_source_id)}`), fallback: hls, subs, info: s.info } : { src: hls, subs, info: s.info };
+  const subs = (s.subs || []).map((t: any) => ({
+    path: `/api/watch/jellyfin/${item.src}/subs/${t.index}?source=${encodeURIComponent(s.media_source_id)}`,
+    label: t.label,
+    lang: t.lang || undefined,
+    on: !!t.default,
+  }));
+  const base = { subs, info: s.info, playSession: s.play_session_id };
+  return s.direct ? { src: media(`/api/watch/jellyfin/${item.src}/stream?source=${encodeURIComponent(s.media_source_id)}`), fallback: hls, ...base } : { src: hls, ...base };
+}
+
+/** Jellyfin: this player is done with its stream (it keeps converting otherwise). */
+function stopJellyfin(playSession?: string) {
+  if (!playSession) return;
+  api(`/api/watch/jellyfin/session?play=${encodeURIComponent(playSession)}`, { method: "DELETE", keepalive: true }).catch(() => {});
+}
+
+/** When this device's player couldn't load the video: the room's Play button becomes Try again. */
+export const usePlayerTrouble = create<{ failed: Record<string, () => void> }>(() => ({ failed: {} }));
+function setTrouble(cid: string, retry: (() => void) | null) {
+  const failed = { ...usePlayerTrouble.getState().failed };
+  if (retry) failed[cid] = retry;
+  else delete failed[cid];
+  usePlayerTrouble.setState({ failed });
 }
 
 /** A link, a library movie or a Jellyfin item: one video element (HLS through hls.js where
- * needed), lined up with the room, with subtitles (CC) when there are any. */
+ * needed), lined up with the room, with subtitles (CC) when there are any. Loading problems are
+ * retried by itself a few times, then the Play button becomes "Try again". */
 function FilePlayer({ cid, item, vol }: { cid: string; item: WatchItem; vol: number }) {
   const ref = useRef<HTMLVideoElement>(null);
   const [problem, setProblem] = useState("");
   const [source, setSource] = useState<Source | null>(null);
   const [useFallback, setUseFallback] = useState(false);
   const [cc, setCc] = useState(() => localStorage.getItem("llamble.cc") === "1");
+  const [subUrl, setSubUrl] = useState<{ path: string; url: string } | null>(null);
   const [showInfo, setShowInfo] = useState(false);
+  // bumped to start over (a new session from the server, a fresh stream)
+  const [attempt, setAttempt] = useState(0);
+  const tries = useRef(0);
+  const retryNow = () => {
+    setProblem("");
+    setTrouble(cid, null);
+    setAttempt((a) => a + 1);
+  };
+  /** something went wrong: try again by itself (2s, 5s, 10s), then hand it to the person */
+  const failed = (why: string) => {
+    if (tries.current < 3) {
+      const wait = [2000, 5000, 10000][tries.current++];
+      setProblem("Having trouble loading. Trying again…");
+      setTimeout(() => setAttempt((a) => a + 1), wait);
+      return;
+    }
+    setProblem(why);
+    setTrouble(cid, retryNow);
+  };
+  useEffect(() => () => setTrouble(cid, null), [cid]);
   useEffect(() => {
     let dead = false;
+    let mine: Source | null = null;
     setSource(null);
     setUseFallback(false);
     resolveSource(item)
-      .then((s) => !dead && setSource(s))
-      .catch((e) => !dead && setProblem(e.message || "This video couldn't be loaded."));
+      .then((s) => {
+        mine = s;
+        if (dead) return stopJellyfin(s.playSession);
+        setSource(s);
+      })
+      .catch((e) => !dead && failed(e.message || "This video couldn't be loaded."));
     return () => {
       dead = true;
+      stopJellyfin(mine?.playSession);
     };
-  }, [item.id]);
+  }, [item.id, attempt]);
   const src = source ? (useFallback && source.fallback ? source.fallback : source.src) : "";
   useEffect(() => {
     const el = ref.current!;
     if (!src) return;
     let hls: any = null;
+    let gone = false;
     const isHls = /\.m3u8(\?|$)/i.test(src);
     if (isHls && !el.canPlayType("application/vnd.apple.mpegurl")) {
       import("hls.js").then(({ default: Hls }) => {
+        if (gone) return;
         if (!Hls.isSupported()) return setProblem("This device can't play that stream.");
         hls = new Hls();
+        let mediaFixes = 0;
+        hls.on(Hls.Events.ERROR, (_: any, d: any) => {
+          if (!d.fatal) return;
+          // a blip in the picture data: hls.js can usually patch it up in place
+          if (d.type === Hls.ErrorTypes.MEDIA_ERROR && mediaFixes++ < 2) return hls.recoverMediaError();
+          // the stream itself broke (Jellyfin stopped converting, a part is missing…): start over
+          failed("This video couldn't be loaded.");
+        });
         hls.loadSource(src);
         hls.attachMedia(el);
       });
     } else el.src = src;
     return () => {
+      gone = true;
       hls?.destroy();
       el.removeAttribute("src");
       el.load();
     };
   }, [src]);
-  // subtitles: show the default (or first) track when CC is on
+  // subtitles: the default (or first) track, fetched when CC is turned on
+  const pick = source?.subs.length ? source.subs[Math.max(0, source.subs.findIndex((x) => x.on))] : null;
+  useEffect(() => {
+    if (!cc || !pick || subUrl?.path === pick.path) return;
+    let dead = false;
+    vttBlob(pick.path)
+      .then((url) => !dead && setSubUrl({ path: pick.path, url }))
+      .catch(() => {});
+    return () => {
+      dead = true;
+    };
+  }, [cc, pick?.path]);
   useEffect(() => {
     const el = ref.current;
-    if (!el || !source) return;
-    const tracks = Array.from(el.textTracks);
-    const pick = Math.max(0, source.subs.findIndex((x) => x.on));
-    tracks.forEach((t, i) => (t.mode = cc && i === pick ? "showing" : "hidden"));
-  }, [cc, source, src]);
+    if (!el) return;
+    for (const t of Array.from(el.textTracks)) t.mode = cc ? "showing" : "hidden";
+  }, [cc, subUrl, src]);
   useEffect(() => {
     if (ref.current) ref.current.volume = vol;
   }, [vol]);
@@ -587,10 +663,15 @@ function FilePlayer({ cid, item, vol }: { cid: string; item: WatchItem; vol: num
     },
     (pos, play, rate = 1) => {
       const el = ref.current;
-      if (!el) return;
+      // nothing loaded yet: there's nothing to start (and it isn't the browser's fault)
+      if (!el || !src || el.readyState === 0) return;
       if (pos !== null) el.currentTime = pos / 1000;
       if (el.playbackRate !== rate) el.playbackRate = rate;
-      if (play && el.paused) el.play().catch(() => setProblem("Tap the video to start it (your browser blocked autoplay)."));
+      if (play && el.paused)
+        el.play().catch((e) => {
+          // only a real autoplay block asks for a tap; anything else is a loading problem
+          if (e?.name === "NotAllowedError") setProblem("Tap the video to start it (your browser blocked autoplay).");
+        });
       if (!play && !el.paused) el.pause();
     },
   );
@@ -603,6 +684,8 @@ function FilePlayer({ cid, item, vol }: { cid: string; item: WatchItem; vol: num
         onLoadedMetadata={(e) => {
           setDuration(item.id, e.currentTarget.duration * 1000);
           setProblem("");
+          tries.current = 0;
+          setTrouble(cid, null);
           // ready: go to the room's spot and play now, not at the next check
           lineUp();
         }}
@@ -611,13 +694,14 @@ function FilePlayer({ cid, item, vol }: { cid: string; item: WatchItem; vol: num
         onPlaying={() => setProblem((p) => (p && p.startsWith("Tap the video") ? "" : p))}
         onEnded={() => reportEnded(cid, item)}
         onError={() => {
+          if (!src) return;
           // the file as-is didn't play here: switch to Jellyfin's converted version
           if (source?.fallback && !useFallback) return setUseFallback(true);
-          setProblem("This video couldn't be played here. The link may not allow it, or the format isn't supported.");
+          failed("This video couldn't be played here. The link may not allow it, or the format isn't supported.");
         }}
-        onClick={(e) => e.currentTarget.paused && useWatch.getState().byChannel[cid]?.now?.playing && e.currentTarget.play().then(() => setProblem(""))}
+        onClick={(e) => e.currentTarget.paused && e.currentTarget.readyState > 0 && useWatch.getState().byChannel[cid]?.now?.playing && e.currentTarget.play().then(() => setProblem(""))}
       >
-        {source?.subs.map((t, i) => <track key={t.url} kind="subtitles" src={t.url} label={t.label} srcLang={t.lang} default={i === 0} />)}
+        {subUrl && pick && subUrl.path === pick.path && <track key={subUrl.url} kind="subtitles" src={subUrl.url} label={pick.label} srcLang={pick.lang} default />}
       </video>
       {!!source?.subs.length && (
         <button
@@ -638,7 +722,16 @@ function FilePlayer({ cid, item, vol }: { cid: string; item: WatchItem; vol: num
       )}
       {showInfo && source && <StreamInfo video={ref} source={source} converted={useFallback || !!source.info && source.info.plan !== "direct" && /\.m3u8/i.test(src)} />}
       {!source && !problem && <div className="watch-problem">Loading…</div>}
-      {problem && <div className="watch-problem">{problem}</div>}
+      {problem && (
+        <div className="watch-problem">
+          {problem}
+          {usePlayerTrouble.getState().failed[cid] && (
+            <button className="btn small primary" style={{ marginLeft: 10 }} onClick={retryNow}>
+              ↻ Try again
+            </button>
+          )}
+        </div>
+      )}
     </>
   );
 }

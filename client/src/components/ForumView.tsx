@@ -18,7 +18,7 @@ import { useIsPhone } from "../phone";
 import { block, report } from "../safety";
 
 type ForumParts = { thread_id: string | null; title: string; tags: string[]; quotes: string[]; best_reply_id: string | null };
-type FMsg = Message & { forum: ForumParts; likes: number; liked: boolean; reply_count?: number; last_activity?: number; following?: boolean };
+type FMsg = Message & { forum: ForumParts; likes: number; liked: boolean; reply_count?: number; last_activity?: number; following?: boolean; unread?: boolean };
 
 
 const LIKE = "❤️";
@@ -100,6 +100,19 @@ function PostList({ channel, onColors }: { channel: Channel; onColors: () => voi
         <button className="icon-btn" title="Colors" onClick={(e) => colorsMenu(e, channel, onColors)}>
           🎨
         </button>
+        {data?.posts.some((p) => p.unread) && (
+          <button
+            className="btn small"
+            title="Mark every post here read"
+            onClick={() =>
+              api(`/api/channels/${channel.id}/forum/read`, { method: "POST" })
+                .then(() => setData((d) => (d ? { ...d, posts: filter === "unread" ? [] : d.posts.map((p) => ({ ...p, unread: false })) } : d)))
+                .catch((e) => toast(e.message, "error"))
+            }
+          >
+            Mark all read
+          </button>
+        )}
         <button className="btn small green" onClick={() => setWriting(true)}>
           New post
         </button>
@@ -109,6 +122,7 @@ function PostList({ channel, onColors }: { channel: Channel; onColors: () => voi
         <div className="forum-filters">
           {[
             ["all", "All"],
+            ["unread", "Unread"],
             ["unanswered", "Unanswered"],
             ["solved", "Solved"],
             ["following", "Following"],
@@ -130,7 +144,7 @@ function PostList({ channel, onColors }: { channel: Channel; onColors: () => voi
         ) : !data.posts.length ? (
           <div className="forum-empty">
             <div className="empty-art">🗂️</div>
-            <p className="muted">{filter === "all" && !tag ? "No posts yet. Start one with New post." : "Nothing here."}</p>
+            <p className="muted">{filter === "all" && !tag ? "No posts yet. Start one with New post." : filter === "unread" && !tag ? "You're all caught up." : "Nothing here."}</p>
           </div>
         ) : (
           data.posts.map((p) => <PostCard key={p.id} p={p} onOpen={() => openForumPost(channel.id, p.id)} />)
@@ -146,13 +160,14 @@ function PostCard({ p, onOpen }: { p: FMsg; onOpen: () => void }) {
   const first = pics[0];
   const h = heat(p.likes + (p.reply_count || 0));
   return (
-    <div className={`forum-card post-card heat-${h}` + (first ? " has-media" : "")} onClick={onOpen}>
+    <div className={`forum-card post-card heat-${h}` + (first ? " has-media" : "") + (p.unread ? " unread" : "")} onClick={onOpen}>
       <div className="fc-main">
         <div className="fc-head">
           <Avatar user={author} size={22} />
           <b>{author.display_name}</b>
           <span className="muted small">{when(p.created_at)}</span>
           {p.forum.best_reply_id && <span className="fc-badge solved">✓ Solved</span>}
+          {p.unread && <span className="fc-badge new" title="New since you last looked">New</span>}
         </div>
         <div className="fc-title">{p.forum.title}</div>
         {p.content && <div className="fc-preview muted">{p.content.slice(0, 200)}</div>}
@@ -283,6 +298,8 @@ function Thread({ channel, pid }: { channel: Channel; pid: string }) {
   const [replyTo, setReplyTo] = useState<string | null>(null);
   const [quotes, setQuotes] = useState<string[]>([]);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  // the card being edited: its text, and for the post its title and tags
+  const [editing, setEditing] = useState<{ id: string; text: string; title: string; tags: string; own: boolean } | null>(null);
   const bottom = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
     api(`/api/channels/${channel.id}/forum/${pid}`)
@@ -346,10 +363,33 @@ function Thread({ channel, pid }: { channel: Channel; pid: string }) {
   const pickBest = (id: string | null) => api(`/api/forum/${pid}/best`, { method: "PUT", body: { reply_id: id } }).catch((e) => toast(e.message, "error"));
   const quote = (id: string) => (setQuotes((q) => (q.includes(id) ? q : [...q, id])), setTimeout(() => bottom.current?.focus(), 50));
   const jump = (id: string) => useForumNav.setState({ flash: id });
+  const startEdit = (m: FMsg, own: boolean) => setEditing({ id: m.id, text: m.content || "", title: m.forum.title || "", tags: (m.forum.tags || []).join(", "), own });
+  const saveEdit = async () => {
+    if (!editing) return;
+    const m = byId[editing.id];
+    try {
+      if (editing.own && editing.text.trim() !== (m?.content || "").trim()) {
+        if (!editing.text.trim() && !m?.attachments.length) return toast("Write something, or delete it instead", "error");
+        await api(`/api/messages/${editing.id}`, { method: "PATCH", body: { content: editing.text } });
+      }
+      if (editing.id === pid) {
+        const tags = editing.tags.split(",").map((t) => t.trim()).filter(Boolean);
+        if (!editing.title.trim()) return toast("A post needs a title", "error");
+        if (editing.title.trim() !== post.forum.title || tags.join(",") !== post.forum.tags.join(",")) await api(`/api/forum/${pid}`, { method: "PATCH", body: { title: editing.title, tags } });
+      }
+      setEditing(null);
+      api(`/api/channels/${channel.id}/forum/${pid}`).then(setData).catch(() => {});
+    } catch (e: any) {
+      toast(e.message, "error");
+    }
+  };
 
   const menu = (e: React.MouseEvent, m: FMsg) => {
     const mine = m.author.id === me.id;
     const items: any[] = [{ label: "Copy link", onClick: () => (navigator.clipboard.writeText(`llamble://forum/${channel.id}/${pid}/${m.id}`), toast("Link copied")) }];
+    // your own words; staff can fix a post's title and tags
+    if (mine) items.push({ label: m.id === pid ? "Edit post" : "Edit reply", onClick: () => startEdit(m, true) });
+    else if (m.id === pid && staff) items.push({ label: "Edit title and tags", onClick: () => startEdit(m, false) });
     if (m.id !== pid && canPickBest) items.push(post.forum.best_reply_id === m.id ? { label: "Remove best answer", onClick: () => pickBest(null) } : { label: "Mark as best answer", onClick: () => pickBest(m.id) });
     if (mine || staff)
       items.push({
@@ -412,7 +452,34 @@ function Thread({ channel, pid }: { channel: Channel; pid: string }) {
             ⋯
           </button>
         </div>
-        {isPost && <div className="fc-title big">{m.forum.title}</div>}
+        {editing?.id === m.id ? (
+          <div className="fc-edit">
+            {isPost && <input className="fc-edit-title" value={editing.title} maxLength={200} placeholder="Title" onChange={(e) => setEditing({ ...editing, title: e.target.value })} />}
+            {editing.own && (
+              <textarea
+                value={editing.text}
+                rows={Math.min(12, Math.max(3, editing.text.split("\n").length + 1))}
+                autoFocus
+                onChange={(e) => setEditing({ ...editing, text: e.target.value })}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") setEditing(null);
+                  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) saveEdit();
+                }}
+              />
+            )}
+            {isPost && <input value={editing.tags} placeholder="Tags, separated by commas" onChange={(e) => setEditing({ ...editing, tags: e.target.value })} />}
+            <div className="row gap">
+              <button className="btn small primary" onClick={saveEdit}>
+                Save
+              </button>
+              <button className="btn small" onClick={() => setEditing(null)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : (
+          isPost && <div className="fc-title big">{m.forum.title}</div>
+        )}
         {!!m.forum.quotes?.length && (
           <div className="fc-quotes">
             {m.forum.quotes.map((q) => {
@@ -425,7 +492,7 @@ function Thread({ channel, pid }: { channel: Channel; pid: string }) {
             })}
           </div>
         )}
-        {m.content && (
+        {m.content && !(editing?.id === m.id && editing.own) && (
           <div className="fc-text">
             <Markdown text={m.content} guildId={channel.guild_id} />
           </div>

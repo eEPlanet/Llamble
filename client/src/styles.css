@@ -995,7 +995,6 @@ body.pop-body > .pop { height: 100vh; }
 .hb-index-title { margin: 0 0 14px; font-size: 15px; font-weight: 800; color: #2b2b2b; }
 .hb-plain .hb-index-title { color: var(--text-strong, var(--text-strong)); }
 .hb-call { display: flex; align-items: center; gap: 8px; padding: 6px 0; font-size: 14px; min-width: 0; }
-.hb-call-people { display: flex; gap: 2px; margin-left: auto; }
 .hb-join { border: 0; cursor: pointer; background: #22a55a; color: #fff; font-weight: 700; font-size: 12px; padding: 4px 12px; border-radius: 12px; }
 .hb-join:hover { filter: brightness(1.1); }
 .hb-in { font-size: 12px; font-weight: 700; color: #22a55a; }
@@ -1914,3 +1913,18 @@ body.pop-body > .pop { height: 100vh; }
 .other-addrs { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border, rgba(255,255,255,.08)); }
 .other-addrs .other-row { margin: 6px 0; align-items: center; }
 .other-addrs .other-row input { flex: 1; min-width: 0; }
+
+/* Right now: who's in each call, by name; everyone else under Online */
+.hb-call { flex-wrap: wrap; }
+.hb-call-people { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-left: 4px; flex: 1 1 auto; min-width: 0; }
+.hb-call-person { display: inline-flex; align-items: center; gap: 6px; border: 0; background: none; color: inherit; cursor: pointer; padding: 2px 6px 2px 2px; border-radius: 14px; font-size: 13px; font-weight: 600; max-width: 180px; }
+.hb-call-person:hover { background: var(--bg-hover, rgba(127, 127, 127, 0.15)); }
+.hb-online-title { margin-top: 10px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.7; }
+
+/* Forum: unread posts, editing */
+.fc-badge.new { background: rgba(140,195,255,0.18); color: #8cc3ff; border-radius: 6px; padding: 1px 8px; font-size: 12px; font-weight: 700; }
+.forum-card.post-card.unread .fc-title { font-weight: 800; }
+.forum-card.post-card.unread { box-shadow: inset 3px 0 0 #8cc3ff; }
+.fc-edit { display: flex; flex-direction: column; gap: 8px; margin: 6px 0; }
+.fc-edit input, .fc-edit textarea { width: 100%; box-sizing: border-box; }
+.fc-edit-title { font-size: 18px; font-weight: 700; }

@@ -351,6 +351,11 @@ function RightNow({ scope }: { scope: Scope }) {
     }
     return Object.entries(by).map(([cid, inIt]) => ({ cid, users: inIt }));
   }, [voiceStates, channels, home, scope, hiddenPeople, me]);
+  // online people who aren't already listed in a call above: just "online", not in anything
+  const onlineOnly = useMemo(() => {
+    const inCalls = new Set(calls.flatMap((c) => c.users));
+    return online.filter((u) => !inCalls.has(u));
+  }, [online, calls]);
   // shows on the air right now (in servers I can see)
   const showStatus = useShows((s) => s.status);
   const liveShows = useMemo(
@@ -400,9 +405,10 @@ function RightNow({ scope }: { scope: Scope }) {
             {home && <span className="hb-muted ellipsis">{guilds[ch.guild_id!]?.name}</span>}
             <span className="hb-call-people">
               {inIt.map((u) => (
-                <span key={u} title={users[u]?.display_name}>
-                  <Avatar user={users[u]} size={20} />
-                </span>
+                <button key={u} className="hb-call-person" onClick={() => profile(u)} title={users[u]?.display_name}>
+                  <Avatar user={users[u]} size={22} />
+                  <span className="ellipsis">{users[u]?.display_name}</span>
+                </button>
               ))}
             </span>
             {inCall === cid ? (
@@ -421,8 +427,9 @@ function RightNow({ scope }: { scope: Scope }) {
           </div>
         );
       })}
+      {!!onlineOnly.length && (calls.length > 0 || liveShows.length > 0) && <div className="hb-online-title">Online</div>}
       <div className="hb-people">
-        {online.map((u) => (
+        {onlineOnly.map((u) => (
           <button key={u} className="hb-person" onClick={() => profile(u)} title={users[u]?.display_name}>
             <Avatar user={users[u]} size={30} status />
             <span className="hb-person-text">
